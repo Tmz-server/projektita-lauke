@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="lt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1b7a2e">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>PROJEKTITA lauke</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <button id="btn-back" class="icon-btn" aria-label="Atgal" hidden>
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+  </button>
+  <h1 id="title">PROJEKTITA</h1>
+  <button id="pill" class="pill" type="button" aria-label="Siuntimo būsena">…</button>
+</header>
+
+<main id="main">
+
+  <!-- PRADŽIA -->
+  <section id="v-home" class="view" data-title="PROJEKTITA">
+    <div id="home-banner" class="banner" hidden></div>
+    <div class="grid">
+      <button class="card act" data-go="note">
+        <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11l3 3v13H5z"/><path d="M8 11h8M8 15h8"/></svg>
+        <span>Pastaba</span><small>tekstas + nuotraukos</small>
+      </button>
+      <button class="card act" data-go="marker">
+        <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6-5.6-6-10a6 6 0 0112 0c0 4.4-6 10-6 10z"/><circle cx="12" cy="11" r="2.2"/></svg>
+        <span>Ribožymio foto</span><small>pasirinkti tašką</small>
+      </button>
+      <button class="card act" data-go="expense">
+        <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/></svg>
+        <span>Išlaida</span><small>kuras, parkavimas, Omniva</small>
+      </button>
+      <button class="card act" data-go="files">
+        <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 20h14"/></svg>
+        <span>Matavimų failai</span><small>SurPad CSV / HTML</small>
+      </button>
+    </div>
+    <button class="card wide" data-go="queue" id="home-queue">
+      <span id="home-queue-title">Siuntimo eilė</span><small id="home-queue-sub">—</small>
+    </button>
+    <button class="link" data-go="settings">Nustatymai ir diagnostika</button>
+    <p class="muted center small" id="home-ver"></p>
+  </section>
+
+  <!-- PASTABA -->
+  <section id="v-note" class="view" data-title="Nauja pastaba" hidden>
+    <label class="lbl">Projektas</label>
+    <button type="button" class="pick" id="note-project">Pasirinkite projektą…</button>
+    <label class="lbl" for="note-cat">Tipas</label>
+    <select id="note-cat"></select>
+    <label class="lbl" for="note-title">Tema</label>
+    <input id="note-title" type="text" autocomplete="off" placeholder="Trumpai, kas atsitiko / ką padaryti">
+    <label class="lbl" for="note-body">Aprašymas</label>
+    <textarea id="note-body" rows="5" placeholder="Smulkiau (nebūtina)"></textarea>
+    <label class="lbl">Nuotraukos</label>
+    <div class="row">
+      <button type="button" class="btn" id="note-cam">Fotografuoti</button>
+      <button type="button" class="btn ghost" id="note-gal">Iš galerijos</button>
+    </div>
+    <div class="thumbs" id="note-thumbs"></div>
+    <div class="bar"><button type="button" class="btn primary" id="note-save">Išsaugoti į eilę</button></div>
+  </section>
+
+  <!-- RIBOŽYMIO FOTO -->
+  <section id="v-marker" class="view" data-title="Ribožymio foto" hidden>
+    <label class="lbl">Projektas</label>
+    <button type="button" class="pick" id="marker-project">Pasirinkite projektą…</button>
+    <div id="marker-body" hidden>
+      <div class="row between">
+        <div id="marker-info" class="muted small"></div>
+        <button type="button" class="btn small ghost" id="marker-refresh">Atnaujinti taškus</button>
+      </div>
+      <input id="marker-filter" type="search" inputmode="numeric" placeholder="Ieškoti taško Nr. …" autocomplete="off">
+      <div class="chips" id="marker-chips"></div>
+      <div id="marker-manual" class="manual" hidden>
+        <p class="muted small" id="marker-manual-msg"></p>
+        <div class="row">
+          <input id="marker-nr" type="text" placeholder="Taško Nr." autocomplete="off">
+          <button type="button" class="btn" id="marker-nr-go">Fotografuoti</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- IŠLAIDA -->
+  <section id="v-expense" class="view" data-title="Nauja išlaida" hidden>
+    <label class="lbl">Projektas (nebūtina)</label>
+    <button type="button" class="pick" id="exp-project">Be projekto</button>
+    <label class="lbl" for="exp-cat">Kategorija</label>
+    <select id="exp-cat"></select>
+    <div class="row cols3">
+      <div><label class="lbl" for="exp-qty">Kiekis</label><input id="exp-qty" type="text" inputmode="decimal" value="1"></div>
+      <div><label class="lbl" for="exp-unit">Vnt. kaina, €</label><input id="exp-unit" type="text" inputmode="decimal" placeholder="0,00"></div>
+      <div><label class="lbl" for="exp-amount">Suma, €</label><input id="exp-amount" type="text" inputmode="decimal" placeholder="0,00"></div>
+    </div>
+    <label class="lbl" for="exp-party">Kontrahentas</label>
+    <input id="exp-party" type="text" autocomplete="off">
+    <div class="row cols2">
+      <div><label class="lbl" for="exp-date">Data</label><input id="exp-date" type="date"></div>
+      <div><label class="lbl" for="exp-doc">Dok. Nr.</label><input id="exp-doc" type="text" autocomplete="off"></div>
+    </div>
+    <label class="lbl" for="exp-comment">Komentaras</label>
+    <input id="exp-comment" type="text" autocomplete="off">
+    <label class="lbl">Kvito nuotrauka</label>
+    <div class="row">
+      <button type="button" class="btn" id="exp-cam">Fotografuoti kvitą</button>
+      <button type="button" class="btn ghost" id="exp-gal">Iš galerijos</button>
+    </div>
+    <div class="thumbs" id="exp-thumbs"></div>
+    <div class="bar"><button type="button" class="btn primary" id="exp-save">Išsaugoti į eilę</button></div>
+  </section>
+
+  <!-- MATAVIMŲ FAILAI -->
+  <section id="v-files" class="view" data-title="Matavimų failai" hidden>
+    <label class="lbl">Projektas</label>
+    <button type="button" class="pick" id="files-project">Pasirinkite projektą…</button>
+    <p class="muted small">Pasirinkite SurPad eksportuotus CSV (ir, jei norite, HTML) failus. Kompiuteryje jie bus sudėti į projekto „04 matavimu duomenys“ dienos aplanką pagal matavimo datą.</p>
+    <button type="button" class="btn" id="files-pick">Pasirinkti failus…</button>
+    <ul class="list" id="files-list"></ul>
+    <div class="bar"><button type="button" class="btn primary" id="files-save">Išsaugoti į eilę</button></div>
+  </section>
+
+  <!-- EILĖ -->
+  <section id="v-queue" class="view" data-title="Siuntimo eilė" hidden>
+    <div class="row">
+      <button type="button" class="btn primary" id="queue-send">Siųsti dabar</button>
+      <button type="button" class="btn ghost" id="queue-clean">Išvalyti išsiųstus</button>
+    </div>
+    <p class="muted small" id="queue-msg"></p>
+    <ul class="list" id="queue-list"></ul>
+  </section>
+
+  <!-- NUSTATYMAI -->
+  <section id="v-settings" class="view" data-title="Nustatymai" hidden>
+    <h2>Paskyra</h2>
+    <p id="set-account" class="muted"></p>
+    <div class="row">
+      <button type="button" class="btn primary" id="set-login">Prisijungti su Microsoft</button>
+      <button type="button" class="btn ghost" id="set-logout">Atsijungti</button>
+    </div>
+    <h2>Įrenginys</h2>
+    <label class="lbl" for="set-device">Įrenginio vardas (matomas importo lange)</label>
+    <input id="set-device" type="text" autocomplete="off">
+    <h2>Microsoft programa (vienkartinis nustatymas)</h2>
+    <label class="lbl" for="set-client">Application (client) ID</label>
+    <input id="set-client" type="text" autocomplete="off" spellcheck="false">
+    <label class="lbl" for="set-tenant">Directory (tenant) ID</label>
+    <input id="set-tenant" type="text" autocomplete="off" spellcheck="false">
+    <label class="lbl" for="set-path">Telefono dėžutės aplankas OneDrive</label>
+    <input id="set-path" type="text" autocomplete="off" spellcheck="false">
+    <div class="bar"><button type="button" class="btn primary" id="set-save">Išsaugoti nustatymus</button></div>
+    <h2>Duomenys iš kompiuterio</h2>
+    <p class="muted small" id="set-data"></p>
+    <button type="button" class="btn" id="set-refresh">Atnaujinti projektų sąrašą</button>
+    <h2>Diagnostika</h2>
+    <pre id="set-log" class="log"></pre>
+    <div class="row">
+      <button type="button" class="btn ghost" id="set-copylog">Kopijuoti žurnalą</button>
+      <button type="button" class="btn ghost" id="set-clearlog">Išvalyti</button>
+    </div>
+  </section>
+</main>
+
+<!-- PROJEKTO PASIRINKIMAS -->
+<div id="picker" class="sheet" hidden>
+  <div class="sheet-card">
+    <div class="sheet-head">
+      <strong id="picker-title">Projektas</strong>
+      <button type="button" class="icon-btn" id="picker-close" aria-label="Uždaryti">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <input id="picker-q" type="search" placeholder="Ieškoti pagal PRJ, užsakovą, vietovę…" autocomplete="off">
+    <label class="chk"><input type="checkbox" id="picker-completed"> Rodyti ir užbaigtus</label>
+    <ul class="list pick-list" id="picker-list"></ul>
+    <div class="manual-prj">
+      <input id="picker-manual" type="text" placeholder="Arba įrašykite PRJ numerį (pvz. PRJ491)" autocomplete="off" autocapitalize="characters">
+      <button type="button" class="btn" id="picker-manual-ok">Naudoti</button>
+    </div>
+    <p class="muted small" id="picker-note"></p>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<input type="file" id="in-cam" accept="image/*" capture="environment" hidden>
+<input type="file" id="in-gal" accept="image/*" multiple hidden>
+<input type="file" id="in-files" accept=".csv,.htm,.html,text/csv,text/html,text/plain" multiple hidden>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
