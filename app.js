@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.2.0";
+const VERSION = "1.2.1";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -447,7 +447,6 @@ async function renderPicker() {
   const list = $("picker-list"); list.innerHTML = "";
   let projects = (data && data.projects) || [];
   projects = projects.filter((p) => showDone || !p.completed);
-  if (pickerNav) projects = projects.filter((p) => hasLoc(p));
   if (q) projects = projects.filter((p) => `${p.project_no} ${p.client} ${p.place} ${p.cad_no}`.toLowerCase().includes(q));
   const rec = cfg.recents;
   projects = projects.slice().sort((a, b) => {
@@ -457,12 +456,13 @@ async function renderPicker() {
   });
   for (const p of projects.slice(0, 80)) {
     const li = document.createElement("li");
-    li.innerHTML = `<div class="t">${pickerNav ? "🚗 " : ""}${esc(p.project_no)}${p.type ? " · " + esc(p.type) : ""}${p.completed ? " · užbaigtas" : ""}</div>` +
+    li.innerHTML = `<div class="t">${pickerNav ? "🚗 " : ""}${esc(p.project_no)}${p.type ? " · " + esc(p.type) : ""}${p.completed ? " · užbaigtas" : ""}${pickerNav && !hasLoc(p) ? " · vieta nenustatyta" : ""}</div>` +
       `<div class="s">${esc([p.client, p.place].filter(Boolean).join(" · "))}</div>`;
+    if (pickerNav && !hasLoc(p)) li.style.opacity = ".55";
     li.onclick = () => closePicker(p.project_no);
     list.appendChild(li);
   }
-  if (!projects.length && data) { const li = document.createElement("li"); li.className = "muted"; li.textContent = pickerNav ? "Nerasta projektų su nustatyta vieta. Vietos imamos iš objektai.shp – atnaujinkite projektų sąrašą po to, kai kompiuteryje bus paleista PROJEKTITA." : "Nieko nerasta."; list.appendChild(li); }
+  if (!projects.length && data) { const li = document.createElement("li"); li.className = "muted"; li.textContent = "Nieko nerasta."; list.appendChild(li); }
 }
 function hasLoc(p) { return p && typeof p.lat === "number" && typeof p.lon === "number"; }
 async function navigateToProject(prj) {
