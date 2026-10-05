@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -424,9 +424,9 @@ function renderHome() {
 }
 
 /* ------------------------------------------------------------------ projekto parinkimas */
-let pickerCb = null;
-async function openPicker(cb, { optional = false, title = "Projektas" } = {}) {
-  pickerCb = cb;
+let pickerCb = null, pickerNav = false;
+async function openPicker(cb, { optional = false, title = "Projektas", nav = false } = {}) {
+  pickerCb = cb; pickerNav = nav;
   $("picker-title").textContent = title;
   $("picker").hidden = false;
   $("picker-q").value = ""; $("picker-manual").value = "";
@@ -447,6 +447,7 @@ async function renderPicker() {
   const list = $("picker-list"); list.innerHTML = "";
   let projects = (data && data.projects) || [];
   projects = projects.filter((p) => showDone || !p.completed);
+  if (pickerNav) projects = projects.filter((p) => hasLoc(p));
   if (q) projects = projects.filter((p) => `${p.project_no} ${p.client} ${p.place} ${p.cad_no}`.toLowerCase().includes(q));
   const rec = cfg.recents;
   projects = projects.slice().sort((a, b) => {
@@ -456,12 +457,20 @@ async function renderPicker() {
   });
   for (const p of projects.slice(0, 80)) {
     const li = document.createElement("li");
-    li.innerHTML = `<div class="t">${esc(p.project_no)}${p.type ? " · " + esc(p.type) : ""}${p.completed ? " · užbaigtas" : ""}</div>` +
+    li.innerHTML = `<div class="t">${pickerNav ? "🚗 " : ""}${esc(p.project_no)}${p.type ? " · " + esc(p.type) : ""}${p.completed ? " · užbaigtas" : ""}</div>` +
       `<div class="s">${esc([p.client, p.place].filter(Boolean).join(" · "))}</div>`;
     li.onclick = () => closePicker(p.project_no);
     list.appendChild(li);
   }
-  if (!projects.length && data) { const li = document.createElement("li"); li.className = "muted"; li.textContent = "Nieko nerasta."; list.appendChild(li); }
+  if (!projects.length && data) { const li = document.createElement("li"); li.className = "muted"; li.textContent = pickerNav ? "Nerasta projektų su nustatyta vieta. Vietos imamos iš objektai.shp – atnaujinkite projektų sąrašą po to, kai kompiuteryje bus paleista PROJEKTITA." : "Nieko nerasta."; list.appendChild(li); }
+}
+function hasLoc(p) { return p && typeof p.lat === "number" && typeof p.lon === "number"; }
+async function navigateToProject(prj) {
+  const data = await cacheGet("projects");
+  const p = ((data && data.projects) || []).find((x) => x.project_no === String(prj).toUpperCase());
+  if (!p) { toast("Projekto nėra sąraše – atnaujinkite projektų sąrašą (Nustatymai).", true); return; }
+  if (!hasLoc(p)) { toast("Šio projekto vieta dar nenustatyta (nėra objektai.shp taško).", true); return; }
+  window.location.href = `https://www.google.com/maps/dir/?api=1&destination=${p.lat.toFixed(7)},${p.lon.toFixed(7)}&travelmode=driving`;
 }
 function rememberProject(prj) {
   if (!prj) return;
@@ -724,6 +733,7 @@ function applyCfgFragment() {
 }
 async function boot() {
   $("btn-back").onclick = back;
+  $("home-nav").onclick = () => openPicker((prj) => { if (prj) navigateToProject(prj); }, { title: "Naviguoti į projektą", nav: true });
   document.querySelectorAll("[data-go]").forEach((b) => {
     b.onclick = () => {
       const g = b.dataset.go;
