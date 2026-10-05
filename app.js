@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -570,7 +570,7 @@ function shootPoint(nr, kodas) {
     for (const a of arr) {
       await enqueue("marker_photo", { project_no: marker.project, point_name: String(nr), code: kodas, taken: todayISO() }, [{ blob: a.blob }], `${marker.project}: taškas ${nr}${kodas ? " (" + kodas + ")" : ""}`);
     }
-    toast(`Taško ${nr} nuotrauka įrašyta`); renderMarker();
+    toast(`Taško ${nr} nuotrauka įrašyta į eilę`); renderMarker();
   }, { camera: true });
 }
 function bindMarker() {
@@ -665,7 +665,7 @@ function bindFiles() {
 
 /* ------------------------------------------------------------------ EILĖ */
 const STATE_TXT = { pending: "Laukia", sending: "Siunčiama…", sent: "Išsiųsta", error: "Klaida" };
-const TYPE_TXT = { note: "Pastaba", expense: "Išlaida", measure_files: "Matavimų failai", marker_photo: "Ribožymio foto" };
+const TYPE_TXT = { note: "Pastaba", expense: "Išlaida", measure_files: "Matavimų failai", marker_photo: "Riboženklio foto" };
 async function renderQueue() {
   const ul = $("queue-list"); ul.innerHTML = "";
   const items = (await DB.all("queue")).sort((a, b) => a.created < b.created ? 1 : -1);
