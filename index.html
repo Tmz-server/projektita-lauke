@@ -45,6 +45,9 @@
     <button class="card wide" id="home-nav" type="button">
       <span>🚗 Naviguoti</span><small>atidaryti projekto vietą Google Maps</small>
     </button>
+    <button class="card wide" data-go="contact" id="home-contact" type="button">
+      <span>👤 Kontaktas</span><small>pridėti žmogų prie projekto</small>
+    </button>
     <button class="card wide" data-go="queue" id="home-queue">
       <span id="home-queue-title">Siuntimo eilė</span><small id="home-queue-sub">—</small>
     </button>
@@ -90,6 +93,25 @@
         </div>
       </div>
     </div>
+  </section>
+
+  <!-- KONTAKTAS -->
+  <section id="v-contact" class="view" data-title="Naujas kontaktas" hidden>
+    <label class="lbl">Projektas</label>
+    <button type="button" class="pick" id="ct-project">Pasirinkite projektą…</button>
+    <button type="button" class="btn ghost" id="ct-pick" hidden>Pasirinkti iš telefono kontaktų</button>
+    <label class="lbl" for="ct-name">Vardas, pavardė / pavadinimas</label>
+    <input id="ct-name" type="text" autocomplete="off">
+    <label class="lbl" for="ct-role">Kas jis projekte</label>
+    <input id="ct-role" type="text" list="ct-roles" autocomplete="off" placeholder="Savininkas, kaimynas, notaras…">
+    <datalist id="ct-roles"><option value="Savininkas"><option value="Bendraturtis"><option value="Užsakovo atstovas"><option value="Kaimynas"><option value="Notaras"><option value="Teisininkas"><option value="Seniūnas"><option value="Savivaldybė"><option value="Kita"></datalist>
+    <label class="lbl" for="ct-phone">Telefonas</label>
+    <input id="ct-phone" type="tel" autocomplete="off" placeholder="+370…">
+    <label class="lbl" for="ct-email">El. paštas</label>
+    <input id="ct-email" type="email" autocomplete="off">
+    <label class="lbl" for="ct-notes">Pastabos</label>
+    <textarea id="ct-notes" rows="3" placeholder="Nebūtina"></textarea>
+    <div class="bar"><button type="button" class="btn primary" id="ct-save">Išsaugoti į eilę</button></div>
   </section>
 
   <!-- IŠLAIDA -->

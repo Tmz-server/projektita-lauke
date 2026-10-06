@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.2.1";
+const VERSION = "1.3.0";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -377,7 +377,7 @@ async function refreshPoints(prj, silent) {
 }
 
 /* ------------------------------------------------------------------ UI pagrindas */
-const views = ["home", "note", "marker", "expense", "files", "queue", "settings"];
+const views = ["home", "note", "marker", "expense", "files", "contact", "queue", "settings"];
 const stack = [];
 function show(name, push = true) {
   views.forEach((v) => { $("v-" + v).hidden = v !== name; });
@@ -639,6 +639,35 @@ function bindExpense() {
   };
 }
 
+/* ------------------------------------------------------------------ KONTAKTAS */
+const ct = { project: "" };
+function initContact() {
+  ct.project = ""; setPick($("ct-project"), "", "Pasirinkite projektą…");
+  ["ct-name", "ct-role", "ct-phone", "ct-email", "ct-notes"].forEach((i) => { $(i).value = ""; });
+  $("ct-pick").hidden = !(navigator.contacts && navigator.contacts.select);
+}
+function bindContact() {
+  $("ct-project").onclick = () => openPicker((p) => { ct.project = p || ""; if (p) rememberProject(p); setPick($("ct-project"), ct.project, "Pasirinkite projektą…"); });
+  $("ct-pick").onclick = async () => {
+    try {
+      const r = await navigator.contacts.select(["name", "tel", "email"], { multiple: false });
+      if (!r || !r.length) return;
+      const c = r[0];
+      if (c.name && c.name[0]) $("ct-name").value = c.name[0];
+      if (c.tel && c.tel[0]) $("ct-phone").value = String(c.tel[0]).replace(/\s+/g, " ").trim();
+      if (c.email && c.email[0]) $("ct-email").value = c.email[0];
+    } catch (e) { log("Kontaktų pasirinkimas: " + e.message); toast("Nepavyko atidaryti telefono kontaktų", true); }
+  };
+  $("ct-save").onclick = async () => {
+    const name = $("ct-name").value.trim();
+    if (!name) return toast("Įrašykite vardą", true);
+    if (!ct.project) return toast("Pasirinkite projektą", true);
+    const fields = { project_no: ct.project, name, role: $("ct-role").value.trim(), phone: $("ct-phone").value.trim(), email: $("ct-email").value.trim(), notes: $("ct-notes").value.trim() };
+    await enqueue("contact", fields, [], `${ct.project}: ${name}${fields.role ? " (" + fields.role + ")" : ""}${fields.phone ? " " + fields.phone : ""}`);
+    toast("Kontaktas įrašytas į eilę"); stack.length = 0; show("home");
+  };
+}
+
 /* ------------------------------------------------------------------ MATAVIMŲ FAILAI */
 const mf = { project: "", files: [] };
 function renderFiles() {
@@ -674,7 +703,7 @@ function bindFiles() {
 
 /* ------------------------------------------------------------------ EILĖ */
 const STATE_TXT = { pending: "Laukia", sending: "Siunčiama…", sent: "Išsiųsta", error: "Klaida" };
-const TYPE_TXT = { note: "Pastaba", expense: "Išlaida", measure_files: "Matavimų failai", marker_photo: "Riboženklio foto" };
+const TYPE_TXT = { note: "Pastaba", expense: "Išlaida", measure_files: "Matavimų failai", marker_photo: "Riboženklio foto", contact: "Kontaktas" };
 async function renderQueue() {
   const ul = $("queue-list"); ul.innerHTML = "";
   const items = (await DB.all("queue")).sort((a, b) => a.created < b.created ? 1 : -1);
@@ -737,7 +766,7 @@ async function boot() {
   document.querySelectorAll("[data-go]").forEach((b) => {
     b.onclick = () => {
       const g = b.dataset.go;
-      if (g === "note") initNote(); if (g === "marker") initMarker(); if (g === "expense") initExpense(); if (g === "files") initFiles();
+      if (g === "note") initNote(); if (g === "marker") initMarker(); if (g === "expense") initExpense(); if (g === "files") initFiles(); if (g === "contact") initContact();
       show(g);
     };
   });
@@ -749,7 +778,7 @@ async function boot() {
   $("in-cam").onchange = onPhotoInput; $("in-gal").onchange = onPhotoInput;
   $("queue-send").onclick = async () => { await flush(); renderQueue(); };
   $("queue-clean").onclick = async () => { for (const it of await DB.all("queue")) if (it.state === "sent") await DB.del("queue", it.id); renderQueue(); updateBadge(); };
-  bindNote(); bindMarker(); bindExpense(); bindFiles(); bindSettings();
+  bindNote(); bindMarker(); bindExpense(); bindFiles(); bindContact(); bindSettings();
   window.addEventListener("online", () => { updateBadge(); flush(); });
   window.addEventListener("offline", updateBadge);
   window.addEventListener("popstate", () => {});
