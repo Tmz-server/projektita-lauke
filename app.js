@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.3.0";
+const VERSION = "1.4.0";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -307,7 +307,8 @@ async function enqueue(type, fields, files, summary, extra = {}) {
   const manifest = Object.assign({ version: 1, id, type, device: cfg.device, created: localISO() }, fields, { files: fileList.map((f) => f.name) });
   if (Object.keys(names).length) manifest.names = names;
   const item = Object.assign({ id, created: manifest.created, type, summary, project_no: fields.project_no || "", manifest, files: fileList, state: "pending", error: "", attempts: 0, sentAt: "" }, extra);
-  await DB.put("queue", item);
+  try { await DB.put("queue", item); }
+  catch (e) { delete item.handles; log("Failų nuorodų išsaugoti nepavyko: " + e.message); await DB.put("queue", item); }
   log(`Į eilę: ${type} ${summary}`);
   updateBadge();
   flush();
@@ -320,6 +321,7 @@ async function sendItem(it) {
   for (const f of it.files) await graphPut(`${base}/${f.name}`, f.blob, f.type);
   const mb = new Blob([JSON.stringify(it.manifest, null, 1)], { type: "application/json" });
   await graphPut(`${base}/${it.id}.json`, mb, "application/json");   // manifestas PASKUTINIS
+  it.askDelete = !!(it.handles && it.handles.length);
   it.state = "sent"; it.sentAt = localISO(); it.files = it.files.map((f) => ({ name: f.name })); it.error = "";
   await DB.put("queue", it);
   log("Išsiųsta: " + it.id);
@@ -343,7 +345,43 @@ async function flush() {
       updateBadge();
       if ($("v-queue") && !$("v-queue").hidden) renderQueue();
     }
-  } finally { flushing = false; updateBadge(); if (!$("v-queue").hidden) renderQueue(); }
+  } finally { flushing = false; updateBadge(); if (!$("v-queue").hidden) renderQueue(); maybeAskDelete(); }
+}
+/* Po sėkmingo išsiuntimo – klausiame, ar ištrinti originalius failus telefone (jei failai pasirinkti per sistemos failų langą). */
+let delAsking = false;
+async function maybeAskDelete() {
+  if (delAsking || document.visibilityState !== "visible") return;
+  try {
+    const it = (await DB.all("queue")).find((i) => i.state === "sent" && i.askDelete && i.handles && i.handles.length);
+    if (it) askDeleteFiles(it);
+  } catch (e) { log("Trynimo klausimas: " + e.message); }
+}
+function askDeleteFiles(it) {
+  if (delAsking) return; delAsking = true;
+  const box = document.createElement("div"); box.className = "sheet";
+  box.innerHTML = `<div class="sheet-card"><div class="sheet-head"><strong>Failai išsiųsti</strong></div>` +
+    `<p>Ištrinti šiuos failus iš telefono?</p><ul class="list">${it.handles.map((h) => `<li><div class="t">${esc(h.name)}</div></li>`).join("")}</ul>` +
+    `<div class="row"><button type="button" class="btn primary" data-y>Taip, ištrinti</button><button type="button" class="btn ghost" data-n>Ne, palikti</button></div>` +
+    `<p class="muted small" data-m></p></div>`;
+  document.body.appendChild(box);
+  const close = () => { box.remove(); delAsking = false; };
+  box.querySelector("[data-n]").onclick = async () => { it.askDelete = false; await DB.put("queue", it); close(); if (!$("v-queue").hidden) renderQueue(); };
+  box.querySelector("[data-y]").onclick = async () => {
+    box.querySelector("[data-y]").disabled = true;
+    const left = []; let ok = 0; const errs = [];
+    for (const h of it.handles) {
+      try {
+        if (h.requestPermission) { const r = await h.requestPermission({ mode: "readwrite" }); if (r !== "granted") throw new Error("nėra leidimo"); }
+        if (typeof h.remove !== "function") throw new Error("naršyklė netrina failų");
+        await h.remove(); ok++;
+      } catch (e) { left.push(h); errs.push(`${h.name}: ${e.message}`); log(`Trynimas ${h.name}: ${e.message}`); }
+    }
+    it.handles = left; it.askDelete = false; await DB.put("queue", it);
+    close();
+    if (!left.length) toast(`Ištrinta failų: ${ok}`);
+    else toast(`Ištrinta ${ok}, nepavyko ${left.length} (${errs[0]}). Likusius ištrinkite per „Failai“.`, true);
+    if (!$("v-queue").hidden) renderQueue();
+  };
 }
 async function purgeOldSent() {
   const lim = Date.now() - 7 * 86400000;
@@ -650,13 +688,15 @@ function bindContact() {
   $("ct-project").onclick = () => openPicker((p) => { ct.project = p || ""; if (p) rememberProject(p); setPick($("ct-project"), ct.project, "Pasirinkite projektą…"); });
   $("ct-pick").onclick = async () => {
     try {
-      const r = await navigator.contacts.select(["name", "tel", "email"], { multiple: false });
+      let props = ["name", "tel", "email"];
+      try { const sup = await navigator.contacts.getProperties(); props = props.filter((x) => sup.includes(x)); } catch (_) { /* paliekame visus */ }
+      const r = await navigator.contacts.select(props, { multiple: false });
       if (!r || !r.length) return;
       const c = r[0];
       if (c.name && c.name[0]) $("ct-name").value = c.name[0];
       if (c.tel && c.tel[0]) $("ct-phone").value = String(c.tel[0]).replace(/\s+/g, " ").trim();
       if (c.email && c.email[0]) $("ct-email").value = c.email[0];
-    } catch (e) { log("Kontaktų pasirinkimas: " + e.message); toast("Nepavyko atidaryti telefono kontaktų", true); }
+    } catch (e) { log("Kontaktų pasirinkimas: " + e.name + " " + e.message); toast(`Nepavyko atidaryti telefono kontaktų (${e.name || "klaida"}). Įrašykite ranka.`, true); }
   };
   $("ct-save").onclick = async () => {
     const name = $("ct-name").value.trim();
@@ -682,21 +722,37 @@ function renderFiles() {
 function initFiles() { mf.project = ""; mf.files = []; setPick($("files-project"), "", "Pasirinkite projektą…"); renderFiles(); }
 function bindFiles() {
   $("files-project").onclick = () => openPicker((p) => { mf.project = p; rememberProject(p); setPick($("files-project"), p, "Pasirinkite projektą…"); });
-  $("files-pick").onclick = () => { $("in-files").value = ""; $("in-files").click(); };
-  $("in-files").onchange = (ev) => {
-    for (const f of Array.from(ev.target.files || [])) mf.files.push(f);
-    ev.target.value = ""; renderFiles();
+  const afterAdd = () => {
+    renderFiles();
     // jei failo vardas yra PRJ numeris ir projektas dar nepasirinktas – pasiūlome
     if (!mf.project) {
       const m = mf.files.map((f) => f.name.replace(/\.[^.]+$/, "").toUpperCase()).find((n) => /^PRJ\d+(-\d+)?$/.test(n));
       if (m) { mf.project = m; setPick($("files-project"), m, "Pasirinkite projektą…"); }
     }
   };
+  $("files-pick").onclick = async () => {
+    if (window.showOpenFilePicker) {   // leidžia vėliau paklausti, ar ištrinti originalus telefone
+      try {
+        const hs = await window.showOpenFilePicker({ multiple: true, types: [{ description: "SurPad failai", accept: { "text/csv": [".csv"], "text/html": [".htm", ".html"] } }] });
+        for (const h of hs) { const f = await h.getFile(); f._h = h; mf.files.push(f); }
+        afterAdd(); return;
+      } catch (e) {
+        if (e && e.name === "AbortError") return;
+        log("Failų langas: " + (e && e.message) + " – naudojamas įprastas");
+      }
+    }
+    $("in-files").value = ""; $("in-files").click();
+  };
+  $("in-files").onchange = (ev) => {
+    for (const f of Array.from(ev.target.files || [])) mf.files.push(f);
+    ev.target.value = ""; afterAdd();
+  };
   $("files-save").onclick = async () => {
     if (!mf.project) return toast("Pasirinkite projektą", true);
     if (!mf.files.length) return toast("Pasirinkite bent vieną failą", true);
     await enqueue("measure_files", { project_no: mf.project },
-      mf.files.map((f) => ({ blob: f, origName: f.name })), `${mf.project}: ${mf.files.map((f) => f.name).join(", ")}`);
+      mf.files.map((f) => ({ blob: f, origName: f.name })), `${mf.project}: ${mf.files.map((f) => f.name).join(", ")}`,
+      { handles: mf.files.map((f) => f._h).filter(Boolean) });
     toast("Failai įrašyti į eilę"); stack.length = 0; show("home");
   };
 }
@@ -715,8 +771,11 @@ async function renderQueue() {
     li.innerHTML = `<div class="t">${esc(TYPE_TXT[it.type] || it.type)}</div><div class="s">${esc(it.summary)}</div>` +
       `<div class="s">${esc(it.created.replace("T", " ").slice(0, 16))}${it.error ? " · " + esc(it.error) : ""}</div>` +
       `<span class="st ${it.state}">${STATE_TXT[it.state] || it.state}</span>` +
-      (it.state !== "sent" ? '<div class="acts"><button type="button" class="btn small ghost" data-act="del">Ištrinti</button></div>' : "");
+      (it.state !== "sent" ? '<div class="acts"><button type="button" class="btn small ghost" data-act="del">Ištrinti</button></div>'
+        : (it.handles && it.handles.length ? '<div class="acts"><button type="button" class="btn small ghost" data-act="rm">Ištrinti failus iš telefono</button></div>' : ""));
     const del = li.querySelector('[data-act="del"]');
+    const rm = li.querySelector('[data-act="rm"]');
+    if (rm) rm.onclick = () => askDeleteFiles(it);
     if (del) del.onclick = async () => { if (confirm("Ištrinti šį neišsiųstą įrašą?")) { await DB.del("queue", it.id); renderQueue(); updateBadge(); } };
     ul.appendChild(li);
   }
@@ -790,6 +849,8 @@ async function boot() {
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch((e) => log("SW: " + e.message));
   if (cfgReady() && Auth.signedIn() && navigator.onLine) { refreshProjects(true); flush(); }
   setInterval(() => { if (navigator.onLine) flush(); }, 60000);
+  document.addEventListener("visibilitychange", maybeAskDelete);
+  setTimeout(maybeAskDelete, 1500);
 }
 document.addEventListener("DOMContentLoaded", boot);
 window.__prj = { slugPy, num, flush, enqueue, DB, Auth };   // diagnostikai / testams

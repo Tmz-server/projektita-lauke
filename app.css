@@ -30,7 +30,7 @@ main{padding:12px 14px calc(96px + env(safe-area-inset-bottom));max-width:640px;
 .view[hidden],[hidden]{display:none !important}
 h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 6px}
 .lbl{display:block;font-size:13px;font-weight:600;color:var(--muted);margin:14px 0 5px}
-input[type=text],input[type=search],input[type=date],select,textarea,.pick{
+input[type=text],input[type=search],input[type=date],input[type=tel],input[type=email],select,textarea,.pick{
   width:100%;font:inherit;color:var(--text);background:var(--card);border:1.5px solid var(--line);
   border-radius:12px;padding:13px 12px;min-height:50px}
 textarea{resize:vertical}
