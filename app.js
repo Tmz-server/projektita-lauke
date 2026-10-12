@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.6.2";
+const VERSION = "1.7.0";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -892,6 +892,26 @@ function fieldTest() {
   }, (e) => { reset(); toast("Padėtis negauta: " + e.message + ". Leiskite naršyklei naudoti vietą.", true); },
   { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
 }
+/* „Mano vieta“: telefonas nusiunčia dabartinę padėtį, kompiuteris „Ribos“ SHP (sklypai.shp) suranda sklypą ir
+   besiribojančius sklypus (tarpas ≤ 0,5 m), o jei SHP / sklypo nėra – grąžina priežastį. */
+async function fieldHere() {
+  if (!cfgReady() || !Auth.signedIn()) { toast("Pirmiausia prisijunkite (Nustatymai)", true); return; }
+  if (!navigator.onLine) { toast("Nėra ryšio", true); return; }
+  if (!("geolocation" in navigator)) { toast("Naršyklė nepalaiko vietos nustatymo", true); return; }
+  const b = $("field-here"), label = b.textContent; b.disabled = true; b.textContent = "Gaunama padėtis…";
+  const reset = () => { b.disabled = false; b.textContent = label; };
+  navigator.geolocation.getCurrentPosition(async (p) => {
+    const reqId = newId(), prj = "VIETA";
+    try {
+      await graphPut(fieldRel("_lauko_uzklausa", prj), new Blob([JSON.stringify({ version: 2, mode: "here", req_id: reqId, project_no: prj, lat: p.coords.latitude, lon: p.coords.longitude, acc: Math.round(p.coords.accuracy), device: cfg.device, created: localISO() })], { type: "application/json" }), "application/json");
+    } catch (e) { reset(); toast("Nepavyko išsiųsti užklausos: " + e.message, true); return; }
+    reset();
+    await cachePut("field_req", { prj, reqId, at: Date.now() });
+    fld.cancel = false;
+    resumeFieldWait();
+  }, (e) => { reset(); toast("Padėtis negauta: " + e.message + ". Leiskite naršyklei naudoti vietą.", true); },
+  { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+}
 function initField() {
   fld.prj = ""; fld.mapOpen = false;
   setPick($("field-project"), "", "Pasirinkite projektą…");
@@ -905,11 +925,11 @@ async function renderFieldStart() {
   $("field-saved-h").hidden = !all.length; $("field-clear").hidden = !all.length;
   for (const p of all) {
     const li = document.createElement("li");
-    li.innerHTML = `<div class="t">${esc(p.project_no)}</div><div class="s">gautas ${esc(String(p.fetched || "").slice(5, 16).replace("T", " "))} · sklypų ${(p.parcels || []).length} · taškų ${(p.points || []).length}</div>` +
+    li.innerHTML = `<div class="t">${esc(p.title || p.project_no)}</div><div class="s">gautas ${esc(String(p.fetched || "").slice(5, 16).replace("T", " "))} · sklypų ${(p.parcels || []).length} · taškų ${(p.points || []).length}</div>` +
       `<div class="acts"><button type="button" class="btn small primary">Atidaryti</button><button type="button" class="btn small ghost">Ištrinti</button></div>`;
     const b = li.querySelectorAll("button");
     b[0].onclick = () => openFieldMap(p);
-    b[1].onclick = async () => { if (confirm(`Ištrinti ${p.project_no} lauko paketą iš telefono?`)) { await fieldDelete(p.project_no); renderFieldStart(); toast("Ištrinta"); } };
+    b[1].onclick = async () => { if (confirm(`Ištrinti „${p.title || p.project_no}“ lauko paketą iš telefono?`)) { await fieldDelete(p.project_no); renderFieldStart(); toast("Ištrinta"); } };
     ul.appendChild(li);
   }
 }
@@ -943,7 +963,7 @@ async function resumeFieldWait() {
       if (fld.cancel) { setWaitBanner(""); break; }
       const sec = Math.round((Date.now() - t0) / 1000);
       if (Date.now() - t0 > FIELD_WAIT_MAX_MS) { await DB.del("cache", "field_req"); fld.waiting = false; setWaitBanner("Kompiuteris neatsakė per 10 min. PROJEKTITA programa turi būti atidaryta kompiuteryje. Bandykite dar kartą.", true); break; }
-      setWaitBanner(`Laukiama kompiuterio (${rq.prj})… ${Math.floor(sec / 60)}:${pad(sec % 60)}. Paprastai 1–3 min.`);
+      setWaitBanner(`Laukiama kompiuterio (${rq.prj === "VIETA" ? "mano vieta" : rq.prj})… ${Math.floor(sec / 60)}:${pad(sec % 60)}. Paprastai 1–3 min.`);
       let j = null;
       try { j = await graphGetJson(fieldRel("_laukas", rq.prj)); }
       catch (e) { if (e.authRequired) { fld.waiting = false; setWaitBanner("Reikia prisijungti (Nustatymai).", true); return; } log("Lauko paketas: " + e.message); }
@@ -955,14 +975,14 @@ async function resumeFieldWait() {
         j.fetched = localISO();
         await cachePut(fieldKey(j.project_no || rq.prj), j);
         setWaitBanner("");
-        toast(`Paketas ${rq.prj} gautas ir ištrintas iš OneDrive`);
-        if (!$("v-field").hidden && !fld.mapOpen) renderFieldStart();
+        toast(`Paketas ${j.title || rq.prj} gautas ir ištrintas iš OneDrive`);
+        if (!$("v-field").hidden && !fld.mapOpen) { if (j.mode === "here") openFieldMap(j); else renderFieldStart(); }
         return;
       }
       for (let i = 0; i < 5 && !fld.cancel; i++) {
         await new Promise((s) => setTimeout(s, 1000));
         const sc = Math.round((Date.now() - t0) / 1000);
-        setWaitBanner(`Laukiama kompiuterio (${rq.prj})… ${Math.floor(sc / 60)}:${pad(sc % 60)}. Paprastai 1–3 min.`);
+        setWaitBanner(`Laukiama kompiuterio (${rq.prj === "VIETA" ? "mano vieta" : rq.prj})… ${Math.floor(sc / 60)}:${pad(sc % 60)}. Paprastai 1–3 min.`);
       }
     }
   } finally { fld.waiting = false; $("field-cancel").hidden = true; }
@@ -983,7 +1003,7 @@ function openFieldMap(pkg, opts = {}) {
   });
   MAP.pts = (pkg.points || []).map((p) => ({ label: p.label, xy: toM(p.lon, p.lat) }));
   $("field-start").hidden = true; $("field-map-wrap").hidden = false;
-  $("title").textContent = pkg.project_no;
+  $("title").textContent = pkg.title || pkg.project_no;
   const notes = (pkg.notes || []).join(" · ");
   $("field-legend").textContent = (notes ? notes + " · " : "") + "Mėlyna – projekto sklypas, pilka – kaimynai, raudona – objekto taškas, oranžinis – jūsų žymos, mėlynas apskritimas – jūsų padėtis.";
   initCanvas(); fitMap(); startFieldWatch(); drawMap(); updateFieldInfo();
@@ -1206,6 +1226,7 @@ function bindField() {
   $("field-project").onclick = () => openPicker((prj) => { if (prj) { fld.prj = prj; setPick($("field-project"), prj, "Pasirinkite projektą…"); } }, { title: "Lauko paketas" });
   $("field-get").onclick = fieldRequest;
   $("field-test").onclick = fieldTest;
+  $("field-here").onclick = fieldHere;
   $("field-mark").onclick = () => {
     if (!fld.pos) { toast("Padėtis dar negauta", true); return; }
     MAP.marks.push({ label: "Z" + (MAP.marks.length + 1), xy: toM(fld.pos.lon, fld.pos.lat) });
