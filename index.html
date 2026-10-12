@@ -192,6 +192,7 @@
       <div class="row" style="margin-top:10px">
         <button type="button" class="btn small ghost" id="field-fit">Visas sklypas</button>
         <button type="button" class="btn small ghost" id="field-mark">Žyma čia</button>
+        <button type="button" class="btn small" id="field-ar">📷 AR</button>
         <button type="button" class="btn small" id="field-done">Baigti ir ištrinti</button>
       </div>
       <p id="field-legend" class="muted small"></p>
@@ -229,6 +230,34 @@
     </div>
   </section>
 </main>
+
+<!-- AR KAMEROS VAIZDAS -->
+<div id="ar" hidden>
+  <video id="ar-video" playsinline muted autoplay></video>
+  <canvas id="ar-canvas"></canvas>
+  <div id="ar-hud" class="ar-hud"></div>
+  <div id="ar-msg" class="ar-msg"></div>
+  <div class="ar-bar">
+    <div class="ar-row">
+      <button type="button" id="ar-left" aria-label="Perstumti kairėn">◀ 1°</button>
+      <button type="button" id="ar-right" aria-label="Perstumti dešinėn">1° ▶</button>
+      <button type="button" id="ar-fov-">FOV −</button>
+      <button type="button" id="ar-fov+">FOV +</button>
+      <button type="button" id="ar-h">Aukštis</button>
+    </div>
+    <div class="ar-row">
+      <button type="button" id="ar-cal" class="main">Kryptis pagal tašką</button>
+      <button type="button" id="ar-close">Uždaryti</button>
+    </div>
+  </div>
+  <div id="ar-pick" class="ar-pick" hidden>
+    <div class="ar-pick-card">
+      <div class="sheet-head"><strong>Į kurį tašką nukreipta kryptis?</strong><button type="button" class="icon-btn" id="ar-pick-close" aria-label="Uždaryti">✕</button></div>
+      <p class="muted small">Nutaikykite centrinį kryžiuką į tikrą tašką natūroje (pvz. riboženklį), tada pasirinkite jį sąraše.</p>
+      <ul id="ar-pick-list" class="list pick-list"></ul>
+    </div>
+  </div>
+</div>
 
 <!-- PROJEKTO PASIRINKIMAS -->
 <div id="picker" class="sheet" hidden>
