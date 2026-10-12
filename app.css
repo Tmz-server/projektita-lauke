@@ -113,3 +113,19 @@ input:focus,select:focus,textarea:focus,.pick:focus{outline:2px solid var(--prim
 .fld-ctl button{width:44px;height:44px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--text);font-size:22px;font-weight:700;box-shadow:var(--shadow)}
 #field-wait .btn{margin-left:8px}
 .banner.info{background:var(--primary-soft);color:var(--text);font-weight:500}
+
+/* AR */
+#ar{position:fixed;inset:0;z-index:40;background:#000;color:#fff}
+#ar video,#ar canvas{position:absolute;inset:0;width:100%;height:100%}
+#ar video{object-fit:cover}
+.ar-hud{position:absolute;left:8px;right:8px;top:calc(8px + env(safe-area-inset-top));background:rgba(0,0,0,.55);border-radius:12px;padding:8px 10px;font-size:14px;line-height:1.35;color:#fff}
+.ar-hud .acc{font-size:20px;font-weight:800}.ar-hud .acc.ok{color:#6ee79a}.ar-hud .acc.warn{color:#ffc266}.ar-hud .acc.bad{color:#ff8a80}
+.ar-hud .muted{color:#d6d8ee}.ar-hud .warnTxt{color:#ffc266}
+.ar-msg{position:absolute;left:12px;right:12px;top:40%;text-align:center;font-weight:700;text-shadow:0 1px 3px #000}
+.ar-bar{position:absolute;left:0;right:0;bottom:0;padding:8px 8px calc(10px + env(safe-area-inset-bottom));background:linear-gradient(to top,rgba(0,0,0,.7),transparent)}
+.ar-row{display:flex;gap:8px;margin-top:8px}
+.ar-row button{flex:1;min-height:46px;border-radius:12px;border:1px solid rgba(255,255,255,.4);background:rgba(0,0,0,.55);color:#fff;font:inherit;font-weight:650}
+.ar-row button.main{background:var(--primary);border-color:transparent;flex:2}
+.ar-pick{position:absolute;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-end}
+.ar-pick-card{background:var(--bg);color:var(--text);width:100%;border-radius:18px 18px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));max-height:70vh;overflow:auto}
+.ar-pick-card li{cursor:pointer}
