@@ -45,6 +45,9 @@
     <button class="card wide" id="home-nav" type="button">
       <span>🚗 Naviguoti</span><small>atidaryti projekto vietą Google Maps</small>
     </button>
+    <button class="card wide" data-go="field" id="home-field" type="button">
+      <span>🗺️ Lauko žemėlapis</span><small>projekto sklypas ir mano padėtis (GPS / RTK)</small>
+    </button>
     <button class="card wide" data-go="contact" id="home-contact" type="button">
       <span>👤 Kontaktas</span><small>pridėti žmogų prie projekto</small>
     </button>
@@ -162,6 +165,38 @@
     <ul class="list" id="queue-list"></ul>
   </section>
 
+  <!-- LAUKO ŽEMĖLAPIS -->
+  <section id="v-field" class="view" data-title="Lauko žemėlapis" hidden>
+    <div id="field-start">
+      <label class="lbl">Projektas</label>
+      <button type="button" class="pick" id="field-project">Pasirinkite projektą…</button>
+      <p class="muted small">Kompiuteris (PROJEKTITA turi būti atidaryta) paruoš šio projekto sklypą, kaimynus ir objekto tašką. Telefonas paketą atsisiunčia, iš OneDrive jį ištrina ir laiko tik čia, kol paspausite „Baigti ir ištrinti“ (arba 3 dienas).</p>
+      <button type="button" class="btn primary wide100" id="field-get">Gauti lauko paketą</button>
+      <button type="button" class="btn ghost wide100" id="field-test">Testas be projekto (mano vieta)</button>
+      <div id="field-wait" class="banner" hidden><span id="field-wait-txt"></span> <button type="button" class="btn small ghost" id="field-cancel" hidden>Atšaukti</button></div>
+      <h2 id="field-saved-h" hidden>Telefone esantys paketai</h2>
+      <ul id="field-saved" class="list"></ul>
+      <button type="button" class="btn ghost" id="field-clear" hidden>Ištrinti visus lauko duomenis</button>
+    </div>
+    <div id="field-map-wrap" hidden>
+      <div class="fld-info" id="field-info"></div>
+      <div class="fld-map">
+        <canvas id="field-canvas"></canvas>
+        <div class="fld-ctl">
+          <button type="button" id="field-zin" aria-label="Priartinti">+</button>
+          <button type="button" id="field-zout" aria-label="Nutolinti">−</button>
+          <button type="button" id="field-center" aria-label="Centruoti į mane">◎</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button type="button" class="btn small ghost" id="field-fit">Visas sklypas</button>
+        <button type="button" class="btn small ghost" id="field-mark">Žyma čia</button>
+        <button type="button" class="btn small" id="field-done">Baigti ir ištrinti</button>
+      </div>
+      <p id="field-legend" class="muted small"></p>
+    </div>
+  </section>
+
   <!-- NUSTATYMAI -->
   <section id="v-settings" class="view" data-title="Nustatymai" hidden>
     <h2>Paskyra</h2>
@@ -184,6 +219,7 @@
     <h2>Duomenys iš kompiuterio</h2>
     <p class="muted small" id="set-data"></p>
     <button type="button" class="btn" id="set-refresh">Atnaujinti projektų sąrašą</button>
+    <button type="button" class="btn ghost" id="set-fieldclear">Ištrinti visus lauko duomenis</button>
     <h2>Diagnostika</h2>
     <pre id="set-log" class="log"></pre>
     <div class="row">
