@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.5.0";
+const VERSION = "1.5.1";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
