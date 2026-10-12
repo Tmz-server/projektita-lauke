@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="lt"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Jutiklių testas</title>
+<style>body{font:16px system-ui,sans-serif;margin:12px;line-height:1.4}h1{font-size:20px}pre{background:#f1f1f6;padding:10px;border-radius:8px;white-space:pre-wrap;font-size:14px}button{font:inherit;padding:10px 14px;margin:4px 4px 4px 0}</style></head>
+<body>
+<h1>Jutiklių testas</h1>
+<p>Palaikykite telefoną rankoje ir pasukiokite. Skaičiai turi keistis. Rezultatą (ekrano nuotrauką) atsiųskite.</p>
+<button id="go">Leisti jutiklius (iOS / kai klausia)</button>
+<pre id="out">kraunama…</pre>
+<script>
+const S = { dev: 0, abs: 0, mot: 0, devNull: 0, absNull: 0, last: {}, sens: {}, err: {}, perm: {} };
+function r(v) { return v == null ? "null" : (+v).toFixed(1); }
+addEventListener("deviceorientation", (e) => { S.dev++; if (e.alpha == null) S.devNull++; S.last.dev = [e.alpha, e.beta, e.gamma, e.absolute]; }, true);
+addEventListener("deviceorientationabsolute", (e) => { S.abs++; if (e.alpha == null) S.absNull++; S.last.abs = [e.alpha, e.beta, e.gamma]; }, true);
+addEventListener("devicemotion", (e) => { S.mot++; const a = e.accelerationIncludingGravity || {}; S.last.mot = [a.x, a.y, a.z, e.rotationRate && e.rotationRate.alpha]; }, true);
+function start(name, opt, key) {
+  try {
+    if (typeof window[name] === "undefined") { S.sens[key] = "nėra API"; return; }
+    const s = new window[name](opt); S.sens[key] = "paleistas, 0 rodmenų"; let n = 0;
+    s.addEventListener("reading", () => { n++; S.sens[key] = "rodmenys: " + n; if (key === "AbsOri") S.last.q = s.quaternion && Array.from(s.quaternion).map((x) => x.toFixed(2)).join(","); if (key === "Gyro") S.last.gyro = r(s.x) + "," + r(s.y) + "," + r(s.z); if (key === "Acc") S.last.acc = r(s.x) + "," + r(s.y) + "," + r(s.z); });
+    s.addEventListener("error", (e) => { S.err[key] = e.error && (e.error.name + ": " + e.error.message); });
+    s.start();
+  } catch (e) { S.sens[key] = "klaida: " + e.name + " " + e.message; }
+}
+async function perms() {
+  for (const n of ["accelerometer", "gyroscope", "magnetometer"]) { try { S.perm[n] = (await navigator.permissions.query({ name: n })).state; } catch (e) { S.perm[n] = "nežinoma"; } }
+}
+perms(); start("AbsoluteOrientationSensor", { frequency: 30 }, "AbsOri"); start("Accelerometer", { frequency: 30 }, "Acc"); start("Gyroscope", { frequency: 30 }, "Gyro");
+document.getElementById("go").onclick = async () => {
+  try { if (DeviceOrientationEvent.requestPermission) S.perm.dev = await DeviceOrientationEvent.requestPermission(); } catch (e) { S.perm.dev = e.name; }
+  try { if (DeviceMotionEvent.requestPermission) S.perm.mot = await DeviceMotionEvent.requestPermission(); } catch (e) { S.perm.mot = e.name; }
+};
+setInterval(() => {
+  const L = S.last;
+  document.getElementById("out").textContent =
+    "Saugus kontekstas: " + isSecureContext + "\nNaršyklė: " + navigator.userAgent.replace(/^Mozilla\/5.0 /, "").slice(0, 110) +
+    "\n\ndeviceorientation: " + S.dev + " įvykių, tušti " + S.devNull + "  " + (L.dev ? L.dev.map(r).join(" ") : "") +
+    "\ndeviceorientationabsolute: " + S.abs + " įvykių, tušti " + S.absNull + "  " + (L.abs ? L.abs.map(r).join(" ") : "") +
+    "\ndevicemotion: " + S.mot + " įvykių  " + (L.mot ? L.mot.map(r).join(" ") : "") +
+    "\n\nAbsoluteOrientationSensor: " + (S.sens.AbsOri || "-") + (S.err.AbsOri ? " | " + S.err.AbsOri : "") + (L.q ? "\n  q=" + L.q : "") +
+    "\nAccelerometer: " + (S.sens.Acc || "-") + (S.err.Acc ? " | " + S.err.Acc : "") + (L.acc ? "  " + L.acc : "") +
+    "\nGyroscope: " + (S.sens.Gyro || "-") + (S.err.Gyro ? " | " + S.err.Gyro : "") + (L.gyro ? "  " + L.gyro : "") +
+    "\n\nLeidimai: " + JSON.stringify(S.perm);
+}, 500);
+</script></body></html>
