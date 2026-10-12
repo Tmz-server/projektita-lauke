@@ -994,6 +994,7 @@ function initCanvas() {
     $("field-zout").onclick = () => zoomAt(MAP.W / 2, MAP.H / 2, 1 / 1.5);
     $("field-center").onclick = () => { if (!fld.pos) { toast("Padėtis dar negauta", true); return; } MAP.follow = true; centerOnUser(); };
     $("field-fit").onclick = () => { MAP.follow = false; fitMap(); drawMap(); };
+    $("field-bg").onclick = () => { cfg.mapBg = !bgOn(); saveCfg(cfg); toast(cfg.mapBg ? "OSM fonas įjungtas" : "OSM fonas išjungtas"); drawMap(); };
     if (window.ResizeObserver) { fld.ro = new ResizeObserver(() => { sizeCanvas(); drawMap(); }); fld.ro.observe(cv.parentElement); }
     window.addEventListener("orientationchange", () => setTimeout(() => { sizeCanvas(); fitMap(); drawMap(); }, 300));
   }
@@ -1027,6 +1028,48 @@ function centerOnUser() { if (!fld.pos) return; const [x, y] = toM(fld.pos.lon, 
 function scheduleDraw() { if (fld.raf) return; fld.raf = requestAnimationFrame(() => { fld.raf = 0; drawMap(); }); }
 const sx_ = (x) => MAP.W / 2 + (x - MAP.cx) * MAP.scale;
 const sy_ = (y) => MAP.H / 2 - (y - MAP.cy) * MAP.scale;
+/* OSM fono plytelės (Web Mercator, 256 px). Piešiamos po vektoriais; be ryšio tiesiog nematomos. */
+const TILE_URL = (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+const tiles = new Map();
+const bgOn = () => cfg.mapBg !== false;
+const lon2x = (lon, z) => (lon + 180) / 360 * Math.pow(2, z);
+const lat2y = (lat, z) => { const r = lat * Math.PI / 180; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * Math.pow(2, z); };
+const x2lon = (x, z) => x / Math.pow(2, z) * 360 - 180;
+const y2lat = (y, z) => Math.atan(Math.sinh(Math.PI * (1 - 2 * y / Math.pow(2, z)))) * 180 / Math.PI;
+function getTile(z, x, y) {
+  const k = z + "/" + x + "/" + y; let t = tiles.get(k);
+  if (!t) {
+    if (tiles.size > 300) { const first = tiles.keys().next().value; tiles.delete(first); }
+    t = { img: new Image(), ok: false };
+    t.img.onload = () => { t.ok = true; scheduleDraw(); };
+    t.img.onerror = () => { t.fail = true; };
+    t.img.src = TILE_URL(z, x, y);
+    tiles.set(k, t);
+  }
+  return t;
+}
+function drawTiles(c) {
+  if (!bgOn() || !navigator.onLine) return;
+  const lonAt = (sx) => MAP.lon0 + (MAP.cx + (sx - MAP.W / 2) / MAP.scale) / MAP.kx;
+  const latAt = (sy) => MAP.lat0 + (MAP.cy - (sy - MAP.H / 2) / MAP.scale) / MAP.ky;
+  const z = Math.max(2, Math.min(19, Math.round(Math.log2(156543.03 * Math.cos(MAP.lat0 * Math.PI / 180) * MAP.scale))));
+  const x0 = Math.floor(lon2x(lonAt(0), z)), x1 = Math.floor(lon2x(lonAt(MAP.W), z));
+  const y0 = Math.floor(lat2y(latAt(0), z)), y1 = Math.floor(lat2y(latAt(MAP.H), z));
+  if ((x1 - x0 + 1) * (y1 - y0 + 1) > 60) return;
+  const n = Math.pow(2, z);
+  for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) {
+    if (ty < 0 || ty >= n) continue;
+    const t = getTile(z, ((tx % n) + n) % n, ty);
+    if (!t.ok) continue;
+    const [ax, ay] = toM(x2lon(tx, z), y2lat(ty, z)), [bx, by] = toM(x2lon(tx + 1, z), y2lat(ty + 1, z));
+    const px = sx_(ax), py = sy_(ay);
+    c.drawImage(t.img, px, py, sx_(bx) - px + 0.5, sy_(by) - py + 0.5);
+  }
+  c.font = "10px system-ui,sans-serif"; c.textAlign = "right";
+  const txt = "© OpenStreetMap", w = c.measureText(txt).width;
+  c.fillStyle = "rgba(255,255,255,.75)"; c.fillRect(MAP.W - w - 10, MAP.H - 16, w + 10, 16);
+  c.fillStyle = "#333"; c.fillText(txt, MAP.W - 5, MAP.H - 5);
+}
 function cssVar(n, d) { const v = getComputedStyle(document.documentElement).getPropertyValue(n).trim(); return v || d; }
 function drawMap() {
   const c = MAP.ctx; if (!c || !fld.mapOpen) return;
@@ -1034,6 +1077,7 @@ function drawMap() {
   const prim = cssVar("--primary", "#393187"), txt = cssVar("--text", "#1b1c3a");
   c.setTransform(MAP.dpr, 0, 0, MAP.dpr, 0, 0);
   c.fillStyle = dark ? "#0f0f20" : "#f7f8fb"; c.fillRect(0, 0, MAP.W, MAP.H);
+  drawTiles(c);
   const path = (rings) => { c.beginPath(); rings.forEach((r) => { r.forEach(([x, y], i) => { i ? c.lineTo(sx_(x), sy_(y)) : c.moveTo(sx_(x), sy_(y)); }); c.closePath(); }); };
   c.lineJoin = "round";
   for (const role of ["neighbor", "main"]) {
