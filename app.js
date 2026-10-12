@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.5.1";
+const VERSION = "1.6.0";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -424,12 +424,13 @@ function show(name, push = true) {
   $("btn-back").hidden = name === "home";
   window.scrollTo(0, 0);
   const cur = name;
-  if (cur !== "field") { stopFieldWatch(); fld.mapOpen = false; }
+  if (cur !== "field") { if (AR.on) closeAR(); stopFieldWatch(); fld.mapOpen = false; }
   if (cur === "queue") renderQueue();
   if (cur === "settings") renderSettings();
   if (cur === "home") renderHome();
 }
 function back() {
+  if (AR.on) { closeAR(); return; }
   if (fld.mapOpen) { closeFieldMap(); return; }
   stack.pop(); const prev = stack[stack.length - 1] || "home"; show(prev, false); }
 let toastTimer = null;
@@ -1199,6 +1200,162 @@ function bindField() {
   $("set-fieldclear").onclick = async () => { if (confirm("Ištrinti VISUS lauko duomenis iš telefono?")) { const n = await fieldClearAll(); toast(`Ištrinta paketų: ${n}`); } };
 }
 
+/* ------------------------------------------------------------------ AR kameros vaizdas */
+/* Kamera + sklypo ribos / taškai ant jos. Padėtis – iš GPS/RTK (fld.pos), kryptis – iš telefono kompaso ir giroskopo
+   (deviceorientation). Kompaso paklaida kompensuojama „Kryptis pagal tašką“ kalibravimu. Tai vaizdinė pagalba, ne matavimas. */
+const AR = { on: false, stream: null, R: null, off: 0, fov: 62, h: 1.5, raf: 0, absolute: false, evAt: 0, W: 0, H: 0, dpr: 1, hudAt: 0, lis: [] };
+function arLoadPrefs() { if (typeof cfg.arFov === "number") AR.fov = cfg.arFov; if (typeof cfg.arH === "number") AR.h = cfg.arH; }
+function rotFromEuler(aD, bD, gD) {
+  const d = Math.PI / 180, a = aD * d, b = bD * d, g = gD * d;
+  const cA = Math.cos(a), sA = Math.sin(a), cB = Math.cos(b), sB = Math.sin(b), cG = Math.cos(g), sG = Math.sin(g);
+  return [
+    [cA * cG - sA * sB * sG, -cB * sA, cA * sG + cG * sA * sB],
+    [cG * sA + cA * sB * sG, cA * cB, sA * sG - cA * cG * sB],
+    [-cB * sG, sB, cB * cG],
+  ];
+}
+function arOrthonorm(R) {   // stulpeliai: x=R[.][0], y=R[.][1], z=R[.][2]
+  const col = (j) => [R[0][j], R[1][j], R[2][j]];
+  const nrm = (v) => { const l = Math.hypot(...v) || 1; return v.map((t) => t / l); };
+  const dot = (p, q) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
+  let z = nrm(col(2)); let y = col(1); const k = dot(y, z); y = nrm([y[0] - k * z[0], y[1] - k * z[1], y[2] - k * z[2]]);
+  const x = [y[1] * z[2] - y[2] * z[1], y[2] * z[0] - y[0] * z[2], y[0] * z[1] - y[1] * z[0]];
+  return [[x[0], y[0], z[0]], [x[1], y[1], z[1]], [x[2], y[2], z[2]]];
+}
+function arOnOrientation(e) {
+  if (e.type === "deviceorientation" && AR.absolute) return;            // jau gaunamas absoliutus kompasas
+  if (e.alpha == null || e.beta == null || e.gamma == null) return;
+  if (e.type === "deviceorientationabsolute") AR.absolute = true;
+  const R = rotFromEuler(e.alpha, e.beta, e.gamma);
+  if (!AR.R) AR.R = R;
+  else { const k = 0.35; AR.R = arOrthonorm(AR.R.map((row, i) => row.map((v, j) => v + k * (R[i][j] - v)))); }
+  AR.evAt = Date.now();
+}
+function arYaw() {   // kameros kryptis (azimutas, laipsniais pagal laikrodį nuo šiaurės), be poslinkio
+  if (!AR.R) return null;
+  const fE = -AR.R[0][2], fN = -AR.R[1][2];
+  return ((Math.atan2(fE, fN) * 180 / Math.PI) + 360) % 360;
+}
+/* Pasaulio vektorius (E, N, U metrai nuo telefono) -> kameros koordinatės (x dešinėn, y aukštyn, gylis pirmyn) */
+function arCam(E, N, U) {
+  const o = AR.off * Math.PI / 180, c = Math.cos(o), s = Math.sin(o);
+  const e2 = E * c - N * s, n2 = E * s + N * c, R = AR.R;
+  const dx = e2 * R[0][0] + n2 * R[1][0] + U * R[2][0];
+  const dy = e2 * R[0][1] + n2 * R[1][1] + U * R[2][1];
+  const dz = e2 * R[0][2] + n2 * R[1][2] + U * R[2][2];
+  return [dx, dy, -dz];
+}
+function arScreen(p) {   // p = kameros koordinatės, gylis > 0
+  const f = (AR.H / 2) / Math.tan(AR.fov * Math.PI / 360);
+  return [AR.W / 2 + f * p[0] / p[2], AR.H / 2 - f * p[1] / p[2]];
+}
+function arPoint(wx, wy, ux, uy, ground = true) { return arCam(wx - ux, wy - uy, ground ? -AR.h : 0); }
+function arTargets(ux, uy) {   // kalibravimo / etikečių taikiniai
+  const t = [];
+  MAP.polys.filter((p) => p.role === "main").forEach((p) => p.rings[0].forEach(([x, y], i) => t.push({ label: "Posūkio taškas " + (i + 1), short: "P" + (i + 1), x, y })));
+  MAP.pts.forEach((p) => t.push({ label: "Objekto taškas " + p.label, short: p.label, x: p.xy[0], y: p.xy[1], obj: true }));
+  MAP.marks.forEach((p) => t.push({ label: "Žyma " + p.label, short: p.label, x: p.xy[0], y: p.xy[1], obj: true }));
+  t.forEach((q) => { q.d = Math.hypot(q.x - ux, q.y - uy); });
+  return t.sort((a, b) => a.d - b.d);
+}
+function arDraw() {
+  AR.raf = requestAnimationFrame(arDraw);
+  const cv = $("ar-canvas"), c = cv.getContext("2d");
+  const W = cv.clientWidth, H = cv.clientHeight, dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  AR.W = W; AR.H = H; AR.dpr = dpr;
+  c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, W, H);
+  const now = Date.now();
+  if (now - AR.hudAt > 400) {
+    AR.hudAt = now;
+    const yaw = arYaw(), st = [];
+    if (!AR.R || now - AR.evAt > 2000) st.push("jutiklių duomenų nėra");
+    else st.push((AR.absolute ? "kompasas " : "kompasas (nepatikimas) ") + Math.round((yaw + AR.off + 360) % 360) + "°");
+    st.push("poslinkis " + (AR.off > 0 ? "+" : "") + AR.off.toFixed(0) + "°");
+    $("ar-hud").innerHTML = $("field-info").innerHTML + `<div class="small">${st.join(" · ")} · FOV ${AR.fov}° · aukštis ${AR.h.toFixed(1).replace(".", ",")} m</div>`;
+  }
+  c.strokeStyle = "rgba(255,255,255,.7)"; c.lineWidth = 1.5;
+  c.beginPath(); c.moveTo(W / 2 - 12, H / 2); c.lineTo(W / 2 + 12, H / 2); c.moveTo(W / 2, H / 2 - 12); c.lineTo(W / 2, H / 2 + 12); c.stroke();
+  if (!AR.R || !fld.pos) {
+    c.fillStyle = "rgba(0,0,0,.55)"; c.fillRect(0, H / 2 - 28, W, 56);
+    c.fillStyle = "#fff"; c.font = "bold 15px system-ui,sans-serif"; c.textAlign = "center";
+    c.fillText(!fld.pos ? "Laukiama GPS padėties…" : "Laukiama kompaso / giroskopo…", W / 2, H / 2 + 5); return;
+  }
+  const [ux, uy] = toM(fld.pos.lon, fld.pos.lat), NEAR = 0.3;
+  const line = (a, b, col, lw) => {
+    let pa = arPoint(a[0], a[1], ux, uy), pb = arPoint(b[0], b[1], ux, uy);
+    if (pa[2] < NEAR && pb[2] < NEAR) return;
+    if (pa[2] < NEAR) { const t = (NEAR - pa[2]) / (pb[2] - pa[2]); pa = pa.map((v, i) => v + t * (pb[i] - v)); }
+    else if (pb[2] < NEAR) { const t = (NEAR - pb[2]) / (pa[2] - pb[2]); pb = pb.map((v, i) => v + t * (pa[i] - v)); }
+    const s1 = arScreen(pa), s2 = arScreen(pb);
+    c.strokeStyle = col; c.lineWidth = lw; c.beginPath(); c.moveTo(s1[0], s1[1]); c.lineTo(s2[0], s2[1]); c.stroke();
+  };
+  c.lineCap = "round";
+  for (const role of ["neighbor", "main"]) for (const p of MAP.polys) {
+    if (p.role !== role) continue;
+    for (const r of p.rings) for (let i = 0; i < r.length; i++) {
+      const a = r[i], b = r[(i + 1) % r.length];
+      if (role === "main") { line(a, b, "rgba(0,0,0,.6)", 6); line(a, b, "#ffd400", 3); } else line(a, b, "rgba(255,255,255,.55)", 1.5);
+    }
+  }
+  const lab = (t, col) => {
+    const p = arPoint(t.x, t.y, ux, uy); if (p[2] < NEAR) return;
+    const [sx, sy] = arScreen(p); if (sx < -40 || sx > AR.W + 40 || sy < -40 || sy > AR.H + 40) return;
+    c.fillStyle = col; c.strokeStyle = "#fff"; c.lineWidth = 2; c.beginPath(); c.arc(sx, sy, t.obj ? 9 : 6, 0, 6.2832); c.fill(); c.stroke();
+    c.font = "bold 14px system-ui,sans-serif"; c.textAlign = "left"; const tx = t.short + " · " + fmtM(t.d), w = c.measureText(tx).width;
+    c.fillStyle = "rgba(0,0,0,.65)"; c.fillRect(sx + 10, sy - 18, w + 10, 22); c.fillStyle = "#fff"; c.fillText(tx, sx + 15, sy - 2);
+  };
+  for (const t of arTargets(ux, uy)) if (t.d < 200) lab(t, t.obj ? "#e8201f" : "#ffd400");
+}
+function arPickTarget() {
+  if (!fld.pos) { toast("Padėtis dar negauta", true); return; }
+  const [ux, uy] = toM(fld.pos.lon, fld.pos.lat), ul = $("ar-pick-list"); ul.innerHTML = "";
+  arTargets(ux, uy).slice(0, 8).forEach((t) => {
+    const li = document.createElement("li");
+    li.innerHTML = `<div class="t">${esc(t.label)}</div><div class="s">${fmtM(t.d)} nuo jūsų</div>`;
+    li.onclick = () => {
+      const yaw = arYaw(); if (yaw == null) { toast("Nėra kompaso duomenų", true); return; }
+      const brg = (Math.atan2(t.x - ux, t.y - uy) * 180 / Math.PI + 360) % 360;
+      let off = brg - yaw; while (off > 180) off -= 360; while (off < -180) off += 360;
+      AR.off = off; $("ar-pick").hidden = true; toast(`Kryptis sulygiuota (poslinkis ${off.toFixed(0)}°)`);
+    };
+    ul.appendChild(li);
+  });
+  $("ar-pick").hidden = false;
+}
+async function openAR() {
+  if (!fld.mapOpen) return;
+  arLoadPrefs(); AR.R = null; AR.absolute = false; AR.off = 0;
+  $("ar").hidden = false; AR.on = true;
+  $("ar-msg").textContent = "Paleidžiama kamera…";
+  try {
+    AR.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    const v = $("ar-video"); v.srcObject = AR.stream; await v.play().catch(() => {});
+    $("ar-msg").textContent = "";
+  } catch (e) { $("ar-msg").textContent = "Kamera nepasiekiama: " + e.message + ". Leiskite naršyklei naudoti kamerą."; }
+  const add = (n) => { window.addEventListener(n, arOnOrientation, true); AR.lis.push(n); };
+  add("deviceorientationabsolute"); add("deviceorientation");
+  if (!AR.raf) arDraw();
+}
+function closeAR() {
+  AR.on = false; cancelAnimationFrame(AR.raf); AR.raf = 0;
+  AR.lis.forEach((n) => window.removeEventListener(n, arOnOrientation, true)); AR.lis = [];
+  if (AR.stream) { AR.stream.getTracks().forEach((t) => t.stop()); AR.stream = null; }
+  $("ar-video").srcObject = null; $("ar").hidden = true; $("ar-pick").hidden = true;
+}
+function bindAR() {
+  $("field-ar").onclick = openAR;
+  $("ar-close").onclick = closeAR;
+  $("ar-cal").onclick = arPickTarget;
+  $("ar-pick-close").onclick = () => { $("ar-pick").hidden = true; };
+  $("ar-left").onclick = () => { AR.off += 1; };
+  $("ar-right").onclick = () => { AR.off -= 1; };
+  $("ar-fov-").onclick = () => { AR.fov = Math.max(40, AR.fov - 2); cfg.arFov = AR.fov; saveCfg(cfg); };
+  $("ar-fov+").onclick = () => { AR.fov = Math.min(100, AR.fov + 2); cfg.arFov = AR.fov; saveCfg(cfg); };
+  $("ar-h").onclick = () => { const o = [1.2, 1.4, 1.5, 1.6, 1.8]; let i = 0; o.forEach((v, k) => { if (Math.abs(v - AR.h) < Math.abs(o[i] - AR.h)) i = k; }); AR.h = o[(i + 1) % o.length]; cfg.arH = AR.h; saveCfg(cfg); toast(`Telefono aukštis ${AR.h.toFixed(1).replace(".", ",")} m`); };
+}
+window.__ar = { rotFromEuler, arCam, arScreen, AR, arYaw, setR: (R) => { AR.R = R; } };
+
 /* ------------------------------------------------------------------ paleidimas */
 function applyCfgFragment() {
   const m = location.hash.match(/^#cfg=(.+)$/);
@@ -1230,7 +1387,7 @@ async function boot() {
   $("in-cam").onchange = onPhotoInput; $("in-gal").onchange = onPhotoInput;
   $("queue-send").onclick = async () => { await flush(); renderQueue(); };
   $("queue-clean").onclick = async () => { for (const it of await DB.all("queue")) if (it.state === "sent") await DB.del("queue", it.id); renderQueue(); updateBadge(); };
-  bindNote(); bindMarker(); bindExpense(); bindFiles(); bindContact(); bindField(); bindSettings();
+  bindNote(); bindMarker(); bindExpense(); bindFiles(); bindContact(); bindField(); bindAR(); bindSettings();
   window.addEventListener("online", () => { updateBadge(); flush(); });
   window.addEventListener("offline", updateBadge);
   window.addEventListener("popstate", () => {});
