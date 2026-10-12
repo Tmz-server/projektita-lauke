@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.6.1";
+const VERSION = "1.6.2";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -797,7 +797,29 @@ async function renderSettings() {
   $("set-data").textContent = pr ? `Projektų sąrašas: ${(pr.value.projects || []).length} įrašų, kompiuteris paskelbė ${String(pr.value.updated || "").replace("T", " ").slice(0, 16)}.` : "Projektų sąrašas dar neatsisiųstas.";
   $("set-log").textContent = JSON.parse(localStorage.getItem("prj_log") || "[]").join("\n") || "(žurnalas tuščias)";
 }
+/* „Atnaujinti versiją“: atsisiunčia naujausius programėlės failus (apeidama naršyklės ir paslaugos talpyklą), išvalo
+   programos talpyklą ir perkrauna. Pastabų, siuntimo eilės ir nustatymų (localStorage / IndexedDB) NEliečia. */
+async function updateApp() {
+  const btn = $("home-update"), label = btn.textContent; btn.disabled = true; btn.textContent = "Tikrinama…";
+  const done = () => { btn.disabled = false; btn.textContent = label; };
+  try {
+    const base = location.href.split("#")[0].split("?")[0].replace(/[^/]*$/, "");
+    let remote = "";
+    for (const f of ["", "index.html", "app.css", "config.js", "app.js", "sw.js", "manifest.webmanifest"]) {
+      const r = await fetch(base + f, { cache: "reload" });
+      if (!r.ok) throw new Error((f || "/") + " " + r.status);
+      if (f === "app.js") remote = ((await r.text()).match(/const VERSION = "([\d.]+)"/) || [])[1] || "";
+    }
+    if (remote && remote === VERSION) { toast("Jau naujausia versija (v" + VERSION + ")"); done(); return; }
+    btn.textContent = "Atnaujinama…";
+    if ("serviceWorker" in navigator) for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
+    if (window.caches) for (const k of await caches.keys()) await caches.delete(k);
+    toast("Rasta v" + (remote || "?") + " – perkraunama…");
+    setTimeout(() => location.reload(), 700);
+  } catch (e) { toast("Nepavyko atnaujinti (nėra ryšio?): " + e.message, true); done(); }
+}
 function bindSettings() {
+  $("home-update").onclick = updateApp;
   $("set-save").onclick = () => {
     cfg.device = slugPy($("set-device").value, 20) || cfg.device;
     cfg.clientId = $("set-client").value.trim(); cfg.tenantId = $("set-tenant").value.trim();
