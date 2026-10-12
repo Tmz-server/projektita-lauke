@@ -100,3 +100,16 @@ input:focus,select:focus,textarea:focus,.pick:focus{outline:2px solid var(--prim
 .toast.bad{background:var(--bad);color:#fff}
 .log{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;font:12px/1.35 ui-monospace,Menlo,Consolas,monospace;
   white-space:pre-wrap;word-break:break-word;max-height:260px;overflow:auto}
+
+/* lauko žemėlapis */
+.wide100{width:100%;margin-top:6px}
+.fld-info{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px;min-height:64px;line-height:1.45}
+.fld-info .acc{font-size:22px;font-weight:800}
+.fld-info .acc.ok{color:#1b7f3b}.fld-info .acc.warn{color:#b26a00}.fld-info .acc.bad{color:var(--bad)}
+.warnTxt{color:var(--warn);font-weight:600}
+.fld-map{position:relative;height:min(60vh,560px);min-height:300px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card)}
+.fld-map canvas{display:block;width:100%;height:100%}
+.fld-ctl{position:absolute;right:8px;top:36px;display:flex;flex-direction:column;gap:8px}
+.fld-ctl button{width:44px;height:44px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--text);font-size:22px;font-weight:700;box-shadow:var(--shadow)}
+#field-wait .btn{margin-left:8px}
+.banner.info{background:var(--primary-soft);color:var(--text);font-weight:500}
