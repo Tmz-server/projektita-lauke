@@ -240,22 +240,33 @@
   <div id="ar-hud" class="ar-hud"></div>
   <div id="ar-msg" class="ar-msg"></div>
   <div class="ar-bar">
-    <div class="ar-row">
-      <button type="button" id="ar-left" aria-label="Perstumti kairėn">◀ 1°</button>
-      <button type="button" id="ar-right" aria-label="Perstumti dešinėn">1° ▶</button>
-      <button type="button" id="ar-fov-">FOV −</button>
-      <button type="button" id="ar-fov+">FOV +</button>
-      <button type="button" id="ar-h">Aukštis</button>
+    <div id="ar-panel" class="ar-panel" hidden>
+      <div class="ar-row">
+        <button type="button" id="ar-left" aria-label="Perstumti kairėn">◀ 1°</button>
+        <button type="button" id="ar-right" aria-label="Perstumti dešinėn">1° ▶</button>
+        <button type="button" id="ar-up" aria-label="Pakelti taškus">▲ 0,5°</button>
+        <button type="button" id="ar-down" aria-label="Nuleisti taškus">▼ 0,5°</button>
+      </div>
+      <div class="ar-row">
+        <button type="button" id="ar-fov-">FOV −</button>
+        <button type="button" id="ar-fov+">FOV +</button>
+        <button type="button" id="ar-h">Aukštis</button>
+        <button type="button" id="ar-reset">Atstatyti</button>
+      </div>
     </div>
     <div class="ar-row">
-      <button type="button" id="ar-cal" class="main">Kryptis pagal tašką</button>
+      <button type="button" id="ar-cal" class="main">Sulygiuoti pagal tašką</button>
+      <button type="button" id="ar-fix">📌 Fiksuoti vietą</button>
+    </div>
+    <div class="ar-row">
+      <button type="button" id="ar-cfg">⚙ Kalibravimas</button>
       <button type="button" id="ar-close">Uždaryti</button>
     </div>
   </div>
   <div id="ar-pick" class="ar-pick" hidden>
     <div class="ar-pick-card">
       <div class="sheet-head"><strong>Į kurį tašką nukreipta kryptis?</strong><button type="button" class="icon-btn" id="ar-pick-close" aria-label="Uždaryti">✕</button></div>
-      <p class="muted small">Nutaikykite centrinį kryžiuką į tikrą tašką natūroje (pvz. riboženklį), tada pasirinkite jį sąraše.</p>
+      <p class="muted small">Atsistokite vienoje vietoje ir nutaikykite centrinį kryžiuką į tikrą tašką ant ŽEMĖS natūroje (pvz. riboženklį), tada pasirinkite jį sąraše. Taip sulygiuojama ir kryptis, ir pasvirimas.</p>
       <ul id="ar-pick-list" class="list pick-list"></ul>
     </div>
   </div>
