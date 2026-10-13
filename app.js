@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.7.1";
+const VERSION = "1.8.0";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -1002,6 +1002,8 @@ function openFieldMap(pkg, opts = {}) {
     return { cad: p.cad_no, role: p.role, rings, c: [sx / n, sy / n] };
   });
   MAP.pts = (pkg.points || []).map((p) => ({ label: p.label, xy: toM(p.lon, p.lat) }));
+  MAP.terr = pkg.terrain && Array.isArray(pkg.terrain.pts) && pkg.terrain.pts.length >= 3 ? pkg.terrain.pts.map(([lo, la, z]) => { const [x, y] = toM(lo, la); return [x, y, z]; }) : null;
+  MAP.terrMemo = new Map();
   $("field-start").hidden = true; $("field-map-wrap").hidden = false;
   $("title").textContent = pkg.title || pkg.project_no;
   const notes = (pkg.notes || []).join(" · ");
@@ -1246,8 +1248,8 @@ function bindField() {
 /* ------------------------------------------------------------------ AR kameros vaizdas */
 /* Kamera + sklypo ribos / taškai ant jos. Padėtis – iš GPS/RTK (fld.pos), kryptis – iš telefono kompaso ir giroskopo
    (deviceorientation). Kompaso paklaida kompensuojama „Kryptis pagal tašką“ kalibravimu. Tai vaizdinė pagalba, ne matavimas. */
-const AR = { on: false, stream: null, R: null, off: 0, fov: 62, h: 1.5, raf: 0, absolute: false, evAt: 0, W: 0, H: 0, dpr: 1, hudAt: 0, lis: [], ev: { abs: 0, rel: 0, nul: 0 }, sensor: null, via: "", perm: "", pitch: 0, fix: null, sm: null, smAt: 0 };
-function arLoadPrefs() { if (typeof cfg.arFov === "number") AR.fov = cfg.arFov; if (typeof cfg.arH === "number") AR.h = cfg.arH; }
+const AR = { on: false, stream: null, R: null, off: 0, fov: 62, h: 1.5, raf: 0, absolute: false, evAt: 0, W: 0, H: 0, dpr: 1, hudAt: 0, lis: [], ev: { abs: 0, rel: 0, nul: 0 }, sensor: null, via: "", perm: "", pitch: 0, fix: null, sm: null, smAt: 0, bh: 1 };
+function arLoadPrefs() { if (typeof cfg.arFov === "number") AR.fov = cfg.arFov; if (typeof cfg.arH === "number") AR.h = cfg.arH; if (typeof cfg.arBh === "number") AR.bh = cfg.arBh; }
 function rotFromEuler(aD, bD, gD) {
   const d = Math.PI / 180, a = aD * d, b = bD * d, g = gD * d;
   const cA = Math.cos(a), sA = Math.sin(a), cB = Math.cos(b), sB = Math.sin(b), cG = Math.cos(g), sG = Math.sin(g);
@@ -1336,7 +1338,34 @@ function arScreen(p) {   // p = kameros koordinatės, gylis > 0
   const f = (AR.H / 2) / Math.tan(AR.fov * Math.PI / 360);
   return [AR.W / 2 + f * p[0] / p[2], AR.H / 2 - f * p[1] / p[2]];
 }
-function arPoint(wx, wy, ux, uy, ground = true) { return arCam(wx - ux, wy - uy, ground ? -AR.h : 0); }
+/* Žemės aukštis (m, LiDAR „Ground“) taške x, y (MAP metrai): vietinė plokštuma iš 8 artimiausių taškų, esant blogai – atvirkštinių atstumų svoris.
+   Be reljefo paketo grąžina 0 (žemė laikoma lygia). */
+function terrZ(x, y) {
+  const T = MAP.terr; if (!T) return 0;
+  const key = Math.round(x * 10) + "," + Math.round(y * 10), memo = MAP.terrMemo;
+  const hit = memo.get(key); if (hit !== undefined) return hit;
+  const best = [];
+  for (const p of T) {
+    const dx = p[0] - x, dy = p[1] - y, d2 = dx * dx + dy * dy;
+    if (best.length < 8 || d2 < best[best.length - 1][0]) { best.push([d2, dx, dy, p[2]]); best.sort((a, b) => a[0] - b[0]); if (best.length > 8) best.pop(); }
+  }
+  let sw = 0, swz = 0; for (const b of best) { const w = 1 / (b[0] + 4); sw += w; swz += w * b[3]; }
+  let v = swz / sw;
+  if (best.length >= 4 && best[0][0] > 0.01) {   // svertinė plokštuma z = a + b·dx + c·dy; reikšmė taške = a
+    let S = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], R = [0, 0, 0];
+    for (const [d2, dx, dy, z] of best) { const w = 1 / (d2 + 4), f = [1, dx, dy]; for (let i = 0; i < 3; i++) { R[i] += w * f[i] * z; for (let j = 0; j < 3; j++) S[i][j] += w * f[i] * f[j]; } }
+    const det = (m) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    const D = det(S);
+    if (Math.abs(D) > 1e-9) {
+      const Sa = S.map((r, i) => [R[i], r[1], r[2]]), a = det(Sa) / D;
+      if (Math.abs(a - v) < 3) v = a;
+    }
+  }
+  if (memo.size > 6000) memo.clear();
+  memo.set(key, v); return v;
+}
+/* Pasaulio taškas -> kameros koordinatės. Linija rodoma AR.bh m virš žemės; kameros aukštis = žemė po telefonu + AR.h. */
+function arPoint(wx, wy, ux, uy, ground = true) { return arCam(wx - ux, wy - uy, ground ? terrZ(wx, wy) + AR.bh - (terrZ(ux, uy) + AR.h) : 0); }
 function arTargets(ux, uy) {   // kalibravimo / etikečių taikiniai
   const t = [];
   MAP.polys.filter((p) => p.role === "main").forEach((p) => p.rings[0].forEach(([x, y], i) => t.push({ label: "Posūkio taškas " + (i + 1), short: "P" + (i + 1), x, y })));
@@ -1359,7 +1388,7 @@ function arDraw() {
     if (!AR.R || now - AR.evAt > 2000) st.push("jutiklių duomenų nėra (įvykiai " + AR.ev.abs + "/" + AR.ev.rel + ", tušti " + AR.ev.nul + (AR.perm ? ", " + AR.perm : "") + ")");
     else st.push((AR.absolute ? "kompasas " : "kompasas (nepatikimas) ") + Math.round((yaw + AR.off + 360) % 360) + "°");
     st.push("poslinkis " + (AR.off > 0 ? "+" : "") + AR.off.toFixed(0) + "°");
-    $("ar-hud").innerHTML = $("field-info").innerHTML + `<div class="small">${st.join(" · ")} · FOV ${AR.fov}° · aukštis ${AR.h.toFixed(1).replace(".", ",")} m · pasvirimas ${AR.pitch > 0 ? "+" : ""}${AR.pitch.toFixed(1).replace(".", ",")}°${AR.fix ? " · vieta užfiksuota" : ""}</div>`;
+    $("ar-hud").innerHTML = $("field-info").innerHTML + `<div class="small">${st.join(" · ")} · FOV ${AR.fov}° · aukštis ${AR.h.toFixed(1).replace(".", ",")} m · pasvirimas ${AR.pitch > 0 ? "+" : ""}${AR.pitch.toFixed(1).replace(".", ",")}° · linija +${AR.bh.toFixed(1).replace(".", ",")} m · ${MAP.terr ? "reljefas: LiDAR (" + MAP.terr.length + ")" : "reljefo nėra (žemė lygi)"}${AR.fix ? " · vieta užfiksuota" : ""}</div>`;
   }
   c.strokeStyle = "rgba(255,255,255,.7)"; c.lineWidth = 1.5;
   c.beginPath(); c.moveTo(W / 2 - 12, H / 2); c.lineTo(W / 2 + 12, H / 2); c.moveTo(W / 2, H / 2 - 12); c.lineTo(W / 2, H / 2 + 12); c.stroke();
@@ -1369,13 +1398,19 @@ function arDraw() {
     c.fillText(!fld.pos ? "Laukiama GPS padėties…" : "Laukiama kompaso / giroskopo…", W / 2, H / 2 + 5); return;
   }
   const [ux, uy] = arPos(), NEAR = 0.3;
-  const line = (a, b, col, lw) => {
+  const seg = (a, b, col, lw) => {
     let pa = arPoint(a[0], a[1], ux, uy), pb = arPoint(b[0], b[1], ux, uy);
     if (pa[2] < NEAR && pb[2] < NEAR) return;
     if (pa[2] < NEAR) { const t = (NEAR - pa[2]) / (pb[2] - pa[2]); pa = pa.map((v, i) => v + t * (pb[i] - v)); }
     else if (pb[2] < NEAR) { const t = (NEAR - pb[2]) / (pa[2] - pb[2]); pb = pb.map((v, i) => v + t * (pa[i] - v)); }
     const s1 = arScreen(pa), s2 = arScreen(pb);
     c.strokeStyle = col; c.lineWidth = lw; c.beginPath(); c.moveTo(s1[0], s1[1]); c.lineTo(s2[0], s2[1]); c.stroke();
+  };
+  const line = (a, b, col, lw) => {   // su reljefu ilgi ruožai dalinami (~3 m), kad linija sektų žemės paviršių
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]), n = MAP.terr ? Math.min(60, Math.max(1, Math.ceil(len / 3))) : 1;
+    if (n === 1) { seg(a, b, col, lw); return; }
+    let prev = a;
+    for (let i = 1; i <= n; i++) { const t = i / n, cur = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; seg(prev, cur, col, lw); prev = cur; }
   };
   c.lineCap = "round";
   for (const role of ["neighbor", "main"]) for (const p of MAP.polys) {
@@ -1405,7 +1440,7 @@ function arPickTarget() {
       const brg = (Math.atan2(t.x - ux, t.y - uy) * 180 / Math.PI + 360) % 360;
       let off = brg - yaw; while (off > 180) off -= 360; while (off < -180) off += 360;
       AR.off = off;
-      const m = arElev(), et = Math.atan2(-AR.h, Math.max(t.d, 1)) * 180 / Math.PI;   // taškas ant žemės: kryžiukas turi būti į jį
+      const m = arElev(), et = Math.atan2(terrZ(t.x, t.y) - terrZ(ux, uy) - AR.h, Math.max(t.d, 1)) * 180 / Math.PI;   // taškas ant žemės: kryžiukas turi būti į jį
       if (m != null) AR.pitch = Math.max(-20, Math.min(20, et - m));
       $("ar-pick").hidden = true; toast(`Sulygiuota: kryptis ${off.toFixed(0)}°, pasvirimas ${AR.pitch.toFixed(1).replace(".", ",")}°`);
     };
@@ -1455,6 +1490,7 @@ function bindAR() {
   };
   $("ar-up").onclick = () => { AR.pitch = Math.max(-20, AR.pitch - 0.5); };     // ▲ – taškai kyla ekrane
   $("ar-down").onclick = () => { AR.pitch = Math.min(20, AR.pitch + 0.5); };    // ▼ – taškai leidžiasi
+  $("ar-bh").onclick = () => { const o = [0, 0.5, 1, 1.5, 2]; let i = 0; o.forEach((v, k) => { if (Math.abs(v - AR.bh) < Math.abs(o[i] - AR.bh)) i = k; }); AR.bh = o[(i + 1) % o.length]; cfg.arBh = AR.bh; saveCfg(cfg); toast(`Linija ${AR.bh.toFixed(1).replace(".", ",")} m virš žemės`); };
   $("ar-reset").onclick = () => { AR.off = 0; AR.pitch = 0; toast("Kryptis ir pasvirimas atstatyti"); };
   $("ar-left").onclick = () => { AR.off += 1; };
   $("ar-right").onclick = () => { AR.off -= 1; };
@@ -1462,7 +1498,7 @@ function bindAR() {
   $("ar-fov+").onclick = () => { AR.fov = Math.min(100, AR.fov + 2); cfg.arFov = AR.fov; saveCfg(cfg); };
   $("ar-h").onclick = () => { const o = [1.2, 1.4, 1.5, 1.6, 1.8]; let i = 0; o.forEach((v, k) => { if (Math.abs(v - AR.h) < Math.abs(o[i] - AR.h)) i = k; }); AR.h = o[(i + 1) % o.length]; cfg.arH = AR.h; saveCfg(cfg); toast(`Telefono aukštis ${AR.h.toFixed(1).replace(".", ",")} m`); };
 }
-window.__ar = { rotFromEuler, arCam, arScreen, AR, arYaw, arElev, arPos, setR: (R) => { AR.R = R; } };
+window.__ar = { terrZ, arPoint, MAP, rotFromEuler, arCam, arScreen, AR, arYaw, arElev, arPos, setR: (R) => { AR.R = R; } };
 
 /* ------------------------------------------------------------------ paleidimas */
 function applyCfgFragment() {
