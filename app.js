@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.7.0";
+const VERSION = "1.7.1";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -1246,7 +1246,7 @@ function bindField() {
 /* ------------------------------------------------------------------ AR kameros vaizdas */
 /* Kamera + sklypo ribos / taškai ant jos. Padėtis – iš GPS/RTK (fld.pos), kryptis – iš telefono kompaso ir giroskopo
    (deviceorientation). Kompaso paklaida kompensuojama „Kryptis pagal tašką“ kalibravimu. Tai vaizdinė pagalba, ne matavimas. */
-const AR = { on: false, stream: null, R: null, off: 0, fov: 62, h: 1.5, raf: 0, absolute: false, evAt: 0, W: 0, H: 0, dpr: 1, hudAt: 0, lis: [], ev: { abs: 0, rel: 0, nul: 0 }, sensor: null, via: "", perm: "" };
+const AR = { on: false, stream: null, R: null, off: 0, fov: 62, h: 1.5, raf: 0, absolute: false, evAt: 0, W: 0, H: 0, dpr: 1, hudAt: 0, lis: [], ev: { abs: 0, rel: 0, nul: 0 }, sensor: null, via: "", perm: "", pitch: 0, fix: null, sm: null, smAt: 0 };
 function arLoadPrefs() { if (typeof cfg.arFov === "number") AR.fov = cfg.arFov; if (typeof cfg.arH === "number") AR.h = cfg.arH; }
 function rotFromEuler(aD, bD, gD) {
   const d = Math.PI / 180, a = aD * d, b = bD * d, g = gD * d;
@@ -1313,7 +1313,24 @@ function arCam(E, N, U) {
   const dx = e2 * R[0][0] + n2 * R[1][0] + U * R[2][0];
   const dy = e2 * R[0][1] + n2 * R[1][1] + U * R[2][1];
   const dz = e2 * R[0][2] + n2 * R[1][2] + U * R[2][2];
-  return [dx, dy, -dz];
+  const dep = -dz;
+  if (!AR.pitch) return [dx, dy, dep];
+  const q = AR.pitch * Math.PI / 180, cq = Math.cos(q), sq = Math.sin(q);   // kameros pasvirimo pataisa (aukštyn +)
+  return [dx, dy * cq - dep * sq, dy * sq + dep * cq];
+}
+/* Telefono padėtis AR vaizdui: išlyginama (GPS šuoliai nešokdina taškų) arba užfiksuota ranka. Metrai kaip ir MAP. */
+function arPos() {
+  if (AR.fix) return AR.fix;
+  if (!fld.pos) return null;
+  const p = toM(fld.pos.lon, fld.pos.lat);
+  if (!AR.sm) AR.sm = p.slice();
+  else if (fld.lastAt !== AR.smAt) { const a = fld.pos.acc <= 1 ? 0.8 : 0.25; AR.sm = [AR.sm[0] + a * (p[0] - AR.sm[0]), AR.sm[1] + a * (p[1] - AR.sm[1])]; }
+  AR.smAt = fld.lastAt;
+  return AR.sm;
+}
+function arElev() {   // kameros ašies aukštis virš horizonto, laipsniais (be pataisos)
+  if (!AR.R) return null;
+  return Math.asin(Math.max(-1, Math.min(1, -AR.R[2][2]))) * 180 / Math.PI;
 }
 function arScreen(p) {   // p = kameros koordinatės, gylis > 0
   const f = (AR.H / 2) / Math.tan(AR.fov * Math.PI / 360);
@@ -1342,7 +1359,7 @@ function arDraw() {
     if (!AR.R || now - AR.evAt > 2000) st.push("jutiklių duomenų nėra (įvykiai " + AR.ev.abs + "/" + AR.ev.rel + ", tušti " + AR.ev.nul + (AR.perm ? ", " + AR.perm : "") + ")");
     else st.push((AR.absolute ? "kompasas " : "kompasas (nepatikimas) ") + Math.round((yaw + AR.off + 360) % 360) + "°");
     st.push("poslinkis " + (AR.off > 0 ? "+" : "") + AR.off.toFixed(0) + "°");
-    $("ar-hud").innerHTML = $("field-info").innerHTML + `<div class="small">${st.join(" · ")} · FOV ${AR.fov}° · aukštis ${AR.h.toFixed(1).replace(".", ",")} m</div>`;
+    $("ar-hud").innerHTML = $("field-info").innerHTML + `<div class="small">${st.join(" · ")} · FOV ${AR.fov}° · aukštis ${AR.h.toFixed(1).replace(".", ",")} m · pasvirimas ${AR.pitch > 0 ? "+" : ""}${AR.pitch.toFixed(1).replace(".", ",")}°${AR.fix ? " · vieta užfiksuota" : ""}</div>`;
   }
   c.strokeStyle = "rgba(255,255,255,.7)"; c.lineWidth = 1.5;
   c.beginPath(); c.moveTo(W / 2 - 12, H / 2); c.lineTo(W / 2 + 12, H / 2); c.moveTo(W / 2, H / 2 - 12); c.lineTo(W / 2, H / 2 + 12); c.stroke();
@@ -1351,7 +1368,7 @@ function arDraw() {
     c.fillStyle = "#fff"; c.font = "bold 15px system-ui,sans-serif"; c.textAlign = "center";
     c.fillText(!fld.pos ? "Laukiama GPS padėties…" : "Laukiama kompaso / giroskopo…", W / 2, H / 2 + 5); return;
   }
-  const [ux, uy] = toM(fld.pos.lon, fld.pos.lat), NEAR = 0.3;
+  const [ux, uy] = arPos(), NEAR = 0.3;
   const line = (a, b, col, lw) => {
     let pa = arPoint(a[0], a[1], ux, uy), pb = arPoint(b[0], b[1], ux, uy);
     if (pa[2] < NEAR && pb[2] < NEAR) return;
@@ -1379,7 +1396,7 @@ function arDraw() {
 }
 function arPickTarget() {
   if (!fld.pos) { toast("Padėtis dar negauta", true); return; }
-  const [ux, uy] = toM(fld.pos.lon, fld.pos.lat), ul = $("ar-pick-list"); ul.innerHTML = "";
+  const [ux, uy] = arPos(), ul = $("ar-pick-list"); ul.innerHTML = "";
   arTargets(ux, uy).slice(0, 8).forEach((t) => {
     const li = document.createElement("li");
     li.innerHTML = `<div class="t">${esc(t.label)}</div><div class="s">${fmtM(t.d)} nuo jūsų</div>`;
@@ -1387,7 +1404,10 @@ function arPickTarget() {
       const yaw = arYaw(); if (yaw == null) { toast("Nėra kompaso duomenų", true); return; }
       const brg = (Math.atan2(t.x - ux, t.y - uy) * 180 / Math.PI + 360) % 360;
       let off = brg - yaw; while (off > 180) off -= 360; while (off < -180) off += 360;
-      AR.off = off; $("ar-pick").hidden = true; toast(`Kryptis sulygiuota (poslinkis ${off.toFixed(0)}°)`);
+      AR.off = off;
+      const m = arElev(), et = Math.atan2(-AR.h, Math.max(t.d, 1)) * 180 / Math.PI;   // taškas ant žemės: kryžiukas turi būti į jį
+      if (m != null) AR.pitch = Math.max(-20, Math.min(20, et - m));
+      $("ar-pick").hidden = true; toast(`Sulygiuota: kryptis ${off.toFixed(0)}°, pasvirimas ${AR.pitch.toFixed(1).replace(".", ",")}°`);
     };
     ul.appendChild(li);
   });
@@ -1395,7 +1415,8 @@ function arPickTarget() {
 }
 async function openAR() {
   if (!fld.mapOpen) return;
-  arLoadPrefs(); AR.R = null; AR.absolute = false; AR.off = 0; AR.ev = { abs: 0, rel: 0, nul: 0 }; AR.via = ""; AR.perm = "";
+  arLoadPrefs(); AR.R = null; AR.absolute = false; AR.off = 0; AR.pitch = 0; AR.fix = null; AR.sm = null; AR.ev = { abs: 0, rel: 0, nul: 0 }; AR.via = ""; AR.perm = "";
+  $("ar-panel").hidden = true; $("ar-fix").classList.remove("on"); $("ar-fix").textContent = "📌 Fiksuoti vietą";
   try {   // iOS ir kai kurios naršyklės reikalauja leidimo judesio jutikliams (turi būti iškviesta paspaudimo metu)
     if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
       const r = await DeviceOrientationEvent.requestPermission(); if (r !== "granted") AR.perm = "leidimas: " + r;
@@ -1425,13 +1446,23 @@ function bindAR() {
   $("ar-close").onclick = closeAR;
   $("ar-cal").onclick = arPickTarget;
   $("ar-pick-close").onclick = () => { $("ar-pick").hidden = true; };
+  $("ar-cfg").onclick = () => { $("ar-panel").hidden = !$("ar-panel").hidden; };
+  $("ar-fix").onclick = () => {
+    const b = $("ar-fix");
+    if (AR.fix) { AR.fix = null; b.classList.remove("on"); b.textContent = "📌 Fiksuoti vietą"; toast("Vieta vėl seka GPS"); return; }
+    const p = arPos(); if (!p) { toast("Padėtis dar negauta", true); return; }
+    AR.fix = p.slice(); b.classList.add("on"); b.textContent = "📌 Vieta užfiksuota"; toast("Vieta užfiksuota – taškai nebešoks nuo GPS. Atrakinti – paspauskite dar kartą");
+  };
+  $("ar-up").onclick = () => { AR.pitch = Math.max(-20, AR.pitch - 0.5); };     // ▲ – taškai kyla ekrane
+  $("ar-down").onclick = () => { AR.pitch = Math.min(20, AR.pitch + 0.5); };    // ▼ – taškai leidžiasi
+  $("ar-reset").onclick = () => { AR.off = 0; AR.pitch = 0; toast("Kryptis ir pasvirimas atstatyti"); };
   $("ar-left").onclick = () => { AR.off += 1; };
   $("ar-right").onclick = () => { AR.off -= 1; };
   $("ar-fov-").onclick = () => { AR.fov = Math.max(40, AR.fov - 2); cfg.arFov = AR.fov; saveCfg(cfg); };
   $("ar-fov+").onclick = () => { AR.fov = Math.min(100, AR.fov + 2); cfg.arFov = AR.fov; saveCfg(cfg); };
   $("ar-h").onclick = () => { const o = [1.2, 1.4, 1.5, 1.6, 1.8]; let i = 0; o.forEach((v, k) => { if (Math.abs(v - AR.h) < Math.abs(o[i] - AR.h)) i = k; }); AR.h = o[(i + 1) % o.length]; cfg.arH = AR.h; saveCfg(cfg); toast(`Telefono aukštis ${AR.h.toFixed(1).replace(".", ",")} m`); };
 }
-window.__ar = { rotFromEuler, arCam, arScreen, AR, arYaw, setR: (R) => { AR.R = R; } };
+window.__ar = { rotFromEuler, arCam, arScreen, AR, arYaw, arElev, arPos, setR: (R) => { AR.R = R; } };
 
 /* ------------------------------------------------------------------ paleidimas */
 function applyCfgFragment() {
