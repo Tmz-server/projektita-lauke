@@ -126,6 +126,8 @@ input:focus,select:focus,textarea:focus,.pick:focus{outline:2px solid var(--prim
 .ar-row{display:flex;gap:8px;margin-top:8px}
 .ar-row button{flex:1;min-height:46px;border-radius:12px;border:1px solid rgba(255,255,255,.4);background:rgba(0,0,0,.55);color:#fff;font:inherit;font-weight:650}
 .ar-row button.main{background:var(--primary);border-color:transparent;flex:2}
+.ar-row button.on{background:#1b7a2e;border-color:transparent}
+.ar-panel{background:rgba(0,0,0,.45);border-radius:12px;padding:0 6px 8px}
 .ar-pick{position:absolute;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-end}
 .ar-pick-card{background:var(--bg);color:var(--text);width:100%;border-radius:18px 18px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));max-height:70vh;overflow:auto}
 .ar-pick-card li{cursor:pointer}
