@@ -172,6 +172,43 @@
         <button type="button" class="btn" id="fm-connect">Prijungti DISTO</button>
       </div>
     </div>
+    <div id="fm-abris" class="card fm-ab" hidden>
+      <div class="row between"><b>Abriso juodraštis</b><button type="button" class="btn small ghost" id="fm-ab-refresh">⟳ Atnaujinti</button></div>
+      <div id="fm-ab-info" class="small muted"></div>
+      <svg id="fm-ab-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" hidden></svg>
+      <div class="fm-ab-tools">
+        <button type="button" class="btn small ghost" id="fm-ab-len">✎ Ruletės ilgis</button>
+        <button type="button" class="btn small ghost" id="fm-ab-move">✥ Kampai</button>
+        <button type="button" class="btn small ghost" id="fm-ab-add">＋ Objektas</button>
+      </div>
+      <div id="fm-ab-rot" class="fm-ab-tools" hidden>
+        <span class="small muted">Pakreipti:</span>
+        <select id="fm-ab-step" aria-label="Kampo žingsnis"><option value="0.1">0,1°</option><option value="0.5">0,5°</option><option value="1" selected>1°</option><option value="2">2°</option><option value="5">5°</option></select>
+        <select id="fm-ab-pivot" aria-label="Sukimo taškas"><option value="a">apie pradžią</option><option value="m">apie vidurį</option><option value="b">apie pabaigą</option></select>
+        <button type="button" class="btn small ghost" id="fm-ab-ccw" aria-label="Sukti prieš laikrodžio rodyklę">⟲</button>
+        <button type="button" class="btn small ghost" id="fm-ab-cw" aria-label="Sukti pagal laikrodžio rodyklę">⟳</button>
+        <button type="button" class="btn small ghost" id="fm-ab-del" hidden>✕ Šalinti objektą</button>
+      </div>
+      <div id="fm-ab-new" class="manual" hidden>
+        <div class="row cols2">
+          <div><label class="lbl" for="fm-ab-kind">Objektas</label><select id="fm-ab-kind"></select></div>
+          <div><label class="lbl" for="fm-ab-how">Kaip</label><select id="fm-ab-how"><option value="rect">Pagal ilgį (× plotį)</option><option value="draw">Braižyti pirštu</option></select></div>
+        </div>
+        <div id="fm-ab-dims" class="row cols2">
+          <div><label class="lbl" for="fm-ab-l">Ilgis, m</label><input id="fm-ab-l" type="text" inputmode="decimal" placeholder="0,00"></div>
+          <div><label class="lbl" for="fm-ab-w">Plotis, m (kontūrui)</label><input id="fm-ab-w" type="text" inputmode="decimal" placeholder="0,00"></div>
+        </div>
+        <div class="row" style="margin-top:8px"><button type="button" class="btn primary" id="fm-ab-create">Pridėti</button></div>
+      </div>
+      <div id="fm-ab-draw" class="fm-ab-tools" hidden>
+        <button type="button" class="btn small" id="fm-ab-fin-c">Baigti (uždaras)</button>
+        <button type="button" class="btn small ghost" id="fm-ab-fin-o">Baigti (atviras)</button>
+        <button type="button" class="btn small ghost" id="fm-ab-undo">↶ Atšaukti tašką</button>
+        <button type="button" class="btn small ghost" id="fm-ab-cancel">✕</button>
+      </div>
+      <label class="chk"><input type="checkbox" id="fm-ab-apply" checked> Pataisyti brėžinį pagal išmatuotą ilgį</label>
+      <button type="button" class="link" id="fm-ab-reset">Atstatyti pradinį brėžinį iš DWG</button>
+    </div>
     <div class="row cols2">
       <div><label class="lbl" for="fm-from">Nuo taško</label><input id="fm-from" type="text" list="fm-names" autocomplete="off" autocapitalize="characters" placeholder="pvz. K1"></div>
       <div><label class="lbl" for="fm-to">Iki taško</label><input id="fm-to" type="text" list="fm-names" autocomplete="off" autocapitalize="characters" placeholder="pvz. R5"></div>
