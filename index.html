@@ -173,7 +173,7 @@
       </div>
     </div>
     <div id="fm-abris" class="card fm-ab" hidden>
-      <div class="row between"><b>Abriso juodraštis</b><button type="button" class="btn small ghost" id="fm-ab-refresh">⟳ Atnaujinti</button></div>
+      <div class="row between"><b>Abriso juodraštis</b><span><button type="button" class="btn small primary" id="fm-ab-full">⛶ Planas</button> <button type="button" class="btn small ghost" id="fm-ab-refresh">⟳ Atnaujinti</button></span></div>
       <div id="fm-ab-info" class="small muted"></div>
       <svg id="fm-ab-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" hidden></svg>
       <div class="fm-ab-tools">
@@ -208,6 +208,14 @@
       </div>
       <label class="chk"><input type="checkbox" id="fm-ab-apply" checked> Pataisyti brėžinį pagal išmatuotą ilgį</label>
       <button type="button" class="link" id="fm-ab-reset">Atstatyti pradinį brėžinį iš DWG</button>
+      <div id="fm-ab-bar" class="fm-ab-bar" hidden>
+        <div id="fm-ab-sel" class="small"></div>
+        <div class="row">
+          <input id="fm-ab-dist" type="text" inputmode="decimal" autocomplete="off" placeholder="Ruletės ilgis, m">
+          <button type="button" class="btn primary" id="fm-ab-save">Įrašyti</button>
+        </div>
+        <div class="row between"><span id="fm-ab-live" class="small muted">D2: —</span><button type="button" class="btn small ghost" id="fm-ab-conn">Prijungti DISTO</button></div>
+      </div>
     </div>
     <div class="row cols2">
       <div><label class="lbl" for="fm-from">Nuo taško</label><input id="fm-from" type="text" list="fm-names" autocomplete="off" autocapitalize="characters" placeholder="pvz. K1"></div>
