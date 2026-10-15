@@ -48,6 +48,9 @@
     <button class="card wide" data-go="field" id="home-field" type="button">
       <span>🗺️ Lauko žemėlapis</span><small>projekto sklypas ir mano padėtis (GPS / RTK)</small>
     </button>
+    <button class="card wide" data-go="fm" id="home-fm" type="button">
+      <span>📏 Lauko matavimas</span><small>ruletė / Leica DISTO (Bluetooth): atkarpos tarp taškų</small>
+    </button>
     <button class="card wide" data-go="contact" id="home-contact" type="button">
       <span>👤 Kontaktas</span><small>pridėti žmogų prie projekto</small>
     </button>
@@ -154,6 +157,41 @@
     <button type="button" class="btn" id="files-pick">Pasirinkti failus…</button>
     <ul class="list" id="files-list"></ul>
     <div class="bar"><button type="button" class="btn primary" id="files-save">Išsaugoti į eilę</button></div>
+  </section>
+
+  <!-- LAUKO MATAVIMAS (ruletė / DISTO) -->
+  <section id="v-fm" class="view" data-title="Lauko matavimas" hidden>
+    <label class="lbl">Projektas</label>
+    <button type="button" class="pick" id="fm-project">Pasirinkite projektą…</button>
+    <div class="card fm-box">
+      <div class="row between">
+        <div>
+          <div id="fm-status" class="small muted">DISTO neprijungtas</div>
+          <div id="fm-big" class="fm-big">—</div>
+        </div>
+        <button type="button" class="btn" id="fm-connect">Prijungti DISTO</button>
+      </div>
+    </div>
+    <div class="row cols2">
+      <div><label class="lbl" for="fm-from">Nuo taško</label><input id="fm-from" type="text" list="fm-names" autocomplete="off" autocapitalize="characters" placeholder="pvz. K1"></div>
+      <div><label class="lbl" for="fm-to">Iki taško</label><input id="fm-to" type="text" list="fm-names" autocomplete="off" autocapitalize="characters" placeholder="pvz. R5"></div>
+    </div>
+    <datalist id="fm-names"></datalist>
+    <div class="row cols2">
+      <div><label class="lbl" for="fm-dist">Atstumas, m</label><input id="fm-dist" type="text" inputmode="decimal" placeholder="0,000"></div>
+      <div><label class="lbl" for="fm-note">Pastaba</label><input id="fm-note" type="text" autocomplete="off" placeholder="nebūtina"></div>
+    </div>
+    <label class="chk"><input type="checkbox" id="fm-chain"> Grandinė: kita atkarpa prasideda ten, kur ši baigėsi</label>
+    <label class="chk"><input type="checkbox" id="fm-auto"> Įrašyti automatiškai, kai ateina matavimas iš DISTO</label>
+    <div class="row" style="margin-top:8px">
+      <button type="button" class="btn primary" id="fm-add">Įrašyti atkarpą</button>
+      <button type="button" class="btn ghost" id="fm-swap" aria-label="Sukeisti Nuo ir Iki">⇄</button>
+    </div>
+    <h2>Atkarpos</h2>
+    <ul class="list" id="fm-list"></ul>
+    <label class="lbl" for="fm-sketch">Eskizo pastaba (nebūtina)</label>
+    <textarea id="fm-sketch" rows="2" placeholder="Pvz. matuota nuo pastato kampų iki ribos taško prie tvoros"></textarea>
+    <div class="bar"><button type="button" class="btn primary" id="fm-save">Išsaugoti į eilę</button></div>
   </section>
 
   <!-- EILĖ -->
