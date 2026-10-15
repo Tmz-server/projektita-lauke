@@ -1,5 +1,5 @@
 /* PROJEKTITA lauke – service worker: programėlė veikia ir be ryšio (tinklas pirmiau, kitaip – talpykla). */
-const CACHE = "projektita-lauke-v13";
+const CACHE = "projektita-lauke-v14";
 const SHELL = ["./", "index.html", "app.css", "app.js", "config.js", "manifest.webmanifest",
   "icon-192.png", "icon-512.png"];
 self.addEventListener("install", (e) => {
@@ -20,3 +20,4 @@ self.addEventListener("fetch", (e) => {
     }).catch(() => caches.match(req).then((m) => m || caches.match("index.html")))
   );
 });
+
