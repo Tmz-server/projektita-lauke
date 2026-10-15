@@ -138,3 +138,9 @@ input:focus,select:focus,textarea:focus,.pick:focus{outline:2px solid var(--prim
 .fm-box.ok{border-color:var(--primary);background:var(--primary-soft)}
 .list li.fm-item{display:flex;align-items:center;gap:10px;justify-content:space-between}
 .list li.fm-item .acts{margin:0}
+
+/* Abriso juodraštis (lauko matavimas) */
+.fm-ab{padding:10px 12px;margin:10px 0}
+.fm-ab svg{width:100%;height:auto;max-height:62vh;background:var(--bg);border:1px solid var(--line);border-radius:12px;margin:8px 0;touch-action:pan-y}
+.fm-ab-tools{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}
+.fm-ab-tools select{width:auto;min-height:36px;padding:4px 8px}
