@@ -131,3 +131,10 @@ input:focus,select:focus,textarea:focus,.pick:focus{outline:2px solid var(--prim
 .ar-pick{position:absolute;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-end}
 .ar-pick-card{background:var(--bg);color:var(--text);width:100%;border-radius:18px 18px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));max-height:70vh;overflow:auto}
 .ar-pick-card li{cursor:pointer}
+
+/* Lauko matavimas (DISTO) */
+.fm-box{padding:12px 14px;margin:10px 0}
+.fm-big{font-size:34px;font-weight:700;line-height:1.1}
+.fm-box.ok{border-color:var(--primary);background:var(--primary-soft)}
+.list li.fm-item{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.list li.fm-item .acts{margin:0}
