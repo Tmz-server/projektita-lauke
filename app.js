@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.8.0";
+const VERSION = "1.9.0";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -415,7 +415,7 @@ async function refreshPoints(prj, silent) {
 }
 
 /* ------------------------------------------------------------------ UI pagrindas */
-const views = ["home", "note", "marker", "expense", "files", "contact", "field", "queue", "settings"];
+const views = ["home", "note", "marker", "expense", "files", "contact", "field", "fm", "queue", "settings"];
 const stack = [];
 function show(name, push = true) {
   views.forEach((v) => { $("v-" + v).hidden = v !== name; });
@@ -1513,13 +1513,163 @@ function applyCfgFragment() {
   } catch (e) { log("Blogas #cfg: " + e.message); }
   history.replaceState(null, "", location.pathname + location.search);
 }
+/* ------------------------------------------------------------------ LAUKO MATAVIMAS (ruletė / Leica DISTO per Bluetooth) */
+const FM_SVC = "3ab10100-f831-4395-b29d-570977d5bf94";
+const FM_KEY = "prj_fm_draft";
+const fm = { project: "", items: [], dev: null, server: null, last: null, lastAt: 0, aux: "", on: false, names: [] };
+function fmSaveDraft() {
+  try { localStorage.setItem(FM_KEY, JSON.stringify({ project: fm.project, items: fm.items, from: $("fm-from").value, to: $("fm-to").value, sketch: $("fm-sketch").value, date: fm.date })); } catch (_) { /* ignoruojam */ }
+}
+function fmLoadDraft() {
+  try { const j = JSON.parse(localStorage.getItem(FM_KEY) || "null"); return j && typeof j === "object" ? j : null; } catch (_) { return null; }
+}
+const fmFmt = (v) => v.toFixed(3).replace(".", ",") + " m";
+function fmStatus(txt, ok) { $("fm-status").textContent = txt; document.querySelector(".fm-box").classList.toggle("ok", !!ok); }
+function fmNames() {
+  const set = new Set(fm.names);
+  fm.items.forEach((i) => { set.add(i.from); set.add(i.to); });
+  $("fm-names").innerHTML = Array.from(set).filter(Boolean).map((n) => `<option value="${esc(n)}">`).join("");
+}
+function fmRender() {
+  const ul = $("fm-list"); ul.innerHTML = "";
+  if (!fm.items.length) { const li = document.createElement("li"); li.className = "muted"; li.textContent = "Atkarpų dar nėra."; ul.appendChild(li); }
+  fm.items.forEach((it, i) => {
+    const li = document.createElement("li"); li.className = "fm-item";
+    li.innerHTML = `<div><div class="t">${esc(it.from)} → ${esc(it.to)} · ${esc(fmFmt(it.dist_m))}</div>` +
+      `<div class="s">${it.source === "disto" ? "DISTO" : "ranka"}${it.note ? " · " + esc(it.note) : ""}</div></div>` +
+      `<div class="acts"><button type="button" class="btn small ghost" data-i="${i}" data-a="edit">Taisyti</button><button type="button" class="btn small ghost" data-i="${i}" data-a="del">✕</button></div>`;
+    ul.appendChild(li);
+  });
+  ul.querySelectorAll("button").forEach((b) => {
+    b.onclick = () => {
+      const i = +b.dataset.i, it = fm.items[i]; if (!it) return;
+      if (b.dataset.a === "edit") { $("fm-from").value = it.from; $("fm-to").value = it.to; $("fm-dist").value = it.dist_m.toFixed(3).replace(".", ","); $("fm-note").value = it.note || ""; }
+      fm.items.splice(i, 1); fmRender(); fmNames(); fmSaveDraft();
+    };
+  });
+}
+function fmAdd(source) {
+  const from = $("fm-from").value.trim(), to = $("fm-to").value.trim(), dist = num($("fm-dist").value);
+  if (!from || !to) return toast("Įrašykite „Nuo taško“ ir „Iki taško“", true);
+  if (dist == null || !(dist > 0) || dist > 300) return toast("Įrašykite atstumą (0–300 m)", true);
+  if (from === to) return toast("„Nuo“ ir „Iki“ negali būti vienodi", true);
+  fm.items.push({ from, to, dist_m: Math.round(dist * 1000) / 1000, note: $("fm-note").value.trim(), source: source || "manual", t: localISO(), aux: fm.aux || "" });
+  $("fm-dist").value = ""; $("fm-note").value = ""; fm.aux = "";
+  if ($("fm-chain").checked) { $("fm-from").value = to; $("fm-to").value = ""; $("fm-to").focus(); }
+  fmRender(); fmNames(); fmSaveDraft();
+}
+function fmOnData(ev) {
+  const c = ev.target, dv = c.value, id = c.uuid;
+  const hex = []; for (let i = 0; i < dv.byteLength; i++) hex.push(("0" + dv.getUint8(i).toString(16)).slice(-2));
+  if (id.startsWith("3ab10101") && dv.byteLength >= 4) {
+    const d = dv.getFloat32(0, true);
+    if (!isFinite(d) || d <= 0.01 || d >= 300) return;
+    const now = Date.now();
+    if (fm.last != null && Math.abs(d - fm.last) < 1e-6 && now - fm.lastAt < 700) return;   // dubliuotas pranešimas
+    fm.last = d; fm.lastAt = now;
+    $("fm-big").textContent = fmFmt(d);
+    $("fm-dist").value = d.toFixed(3).replace(".", ",");
+    try { if (navigator.vibrate) navigator.vibrate(70); } catch (_) { /* */ }
+    log("DISTO: " + d.toFixed(4) + " m");
+    if ($("fm-auto").checked) setTimeout(() => fmAdd("disto"), 0);
+  } else if (id.startsWith("3ab10102")) { fm.aux = hex.join(" "); }
+}
+async function fmSubscribe(server) {
+  const svc = await server.getPrimaryService(FM_SVC);
+  const chars = await svc.getCharacteristics();
+  let n = 0;
+  for (const c of chars) {
+    if ((c.properties.notify || c.properties.indicate) && (c.uuid.startsWith("3ab10101") || c.uuid.startsWith("3ab10102"))) {
+      c.removeEventListener("characteristicvaluechanged", fmOnData);
+      c.addEventListener("characteristicvaluechanged", fmOnData);
+      await c.startNotifications(); n++;
+    }
+  }
+  if (!n) throw new Error("DISTO atstumo charakteristika nerasta");
+}
+async function fmConnect() {
+  if (!navigator.bluetooth) { fmStatus("Ši naršyklė nepalaiko Bluetooth (naudokite „Chrome“ Android telefone)"); return; }
+  try {
+    fmStatus("Pasirinkite DISTO sąraše…");
+    fm.dev = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: "DISTO" }, { namePrefix: "Leica" }, { services: [FM_SVC] }], optionalServices: [FM_SVC, "battery_service"] });
+    fm.dev.removeEventListener("gattserverdisconnected", fmOnDisc);
+    fm.dev.addEventListener("gattserverdisconnected", fmOnDisc);
+    fmStatus("Jungiamasi…");
+    fm.server = await fm.dev.gatt.connect();
+    await fmSubscribe(fm.server);
+    fm.on = true; $("fm-connect").textContent = "Atjungti";
+    fmStatus("Prijungta: " + (fm.dev.name || "DISTO") + " – matuokite (ON/DIST)", true);
+    log("DISTO prijungtas: " + (fm.dev.name || ""));
+  } catch (e) {
+    fm.on = false; $("fm-connect").textContent = "Prijungti DISTO";
+    fmStatus(e.name === "NotFoundError" ? "Įrenginys nepasirinktas. Įjunkite DISTO Bluetooth ir bandykite dar kartą." : "Nepavyko prisijungti: " + e.message);
+    log("DISTO klaida: " + e.name + ": " + e.message);
+  }
+}
+async function fmOnDisc() {
+  if (!fm.on) return;
+  fmStatus("Ryšys nutrūko – jungiamasi iš naujo…");
+  for (let i = 0; i < 3; i++) {
+    try {
+      await new Promise((r) => setTimeout(r, 1200));
+      fm.server = await fm.dev.gatt.connect(); await fmSubscribe(fm.server);
+      fmStatus("Prijungta: " + (fm.dev.name || "DISTO") + " – matuokite (ON/DIST)", true); return;
+    } catch (_) { /* kartojam */ }
+  }
+  fm.on = false; $("fm-connect").textContent = "Prijungti DISTO";
+  fmStatus("Ryšys nutrūko. Įjunkite DISTO Bluetooth ir spauskite „Prijungti DISTO“.");
+}
+function fmDisconnect() {
+  fm.on = false;
+  try { if (fm.dev && fm.dev.gatt.connected) fm.dev.gatt.disconnect(); } catch (_) { /* */ }
+  $("fm-connect").textContent = "Prijungti DISTO"; fmStatus("DISTO atjungtas");
+}
+async function fmSetProject(prj) {
+  fm.project = prj; if (prj) rememberProject(prj);
+  setPick($("fm-project"), prj, "Pasirinkite projektą…");
+  fm.names = [];
+  if (prj) { const d = await cacheGet("points:" + prj); fm.names = ((d && d.points) || []).map((p) => String(p.nr)); }
+  fmNames(); fmSaveDraft();
+}
+function initFm() {
+  fm.items = []; fm.date = todayISO();
+  $("fm-from").value = ""; $("fm-to").value = ""; $("fm-dist").value = ""; $("fm-note").value = ""; $("fm-sketch").value = "";
+  setPick($("fm-project"), "", "Pasirinkite projektą…"); fm.project = ""; fm.names = [];
+  const dr = fmLoadDraft();
+  if (dr && ((dr.items && dr.items.length) || dr.project)) {
+    fm.items = Array.isArray(dr.items) ? dr.items : []; fm.date = dr.date || todayISO();
+    $("fm-from").value = dr.from || ""; $("fm-to").value = dr.to || ""; $("fm-sketch").value = dr.sketch || "";
+    if (dr.project) fmSetProject(dr.project);
+    if (fm.items.length) toast("Atkurtas nebaigtas matavimas (" + fm.items.length + " atkarp.)");
+  }
+  if (!fm.on) { $("fm-connect").textContent = "Prijungti DISTO"; fmStatus(navigator.bluetooth ? "DISTO neprijungtas (galima ir įvesti ranka)" : "Bluetooth nepalaikomas – atstumus įveskite ranka"); }
+  $("fm-big").textContent = fm.last != null ? fmFmt(fm.last) : "—";
+  fmRender(); fmNames();
+}
+function bindFm() {
+  $("fm-project").onclick = () => openPicker((p) => fmSetProject(p), { title: "Projektas (lauko matavimas)" });
+  $("fm-connect").onclick = () => { if (fm.on) fmDisconnect(); else fmConnect(); };
+  $("fm-add").onclick = () => fmAdd($("fm-dist").value && fm.last != null && Math.abs(num($("fm-dist").value) - fm.last) < 0.0006 ? "disto" : "manual");
+  $("fm-swap").onclick = () => { const a = $("fm-from").value; $("fm-from").value = $("fm-to").value; $("fm-to").value = a; fmSaveDraft(); };
+  ["fm-from", "fm-to", "fm-sketch"].forEach((id) => { $(id).oninput = fmSaveDraft; });
+  $("fm-save").onclick = async () => {
+    if (!fm.project) return toast("Pasirinkite projektą", true);
+    if (!fm.items.length) return toast("Įrašykite bent vieną atkarpą", true);
+    const total = fm.items.reduce((s, i) => s + i.dist_m, 0);
+    await enqueue("field_measure", { project_no: fm.project, measure_date: fm.date || todayISO(), sketch_note: $("fm-sketch").value.trim(), items: fm.items },
+      [], `${fm.project}: lauko matavimas, ${fm.items.length} atkarp., ${total.toFixed(2).replace(".", ",")} m`);
+    try { localStorage.removeItem(FM_KEY); } catch (_) { /* */ }
+    fm.items = []; toast("Matavimas įrašytas į eilę"); stack.length = 0; show("home");
+  };
+}
+
 async function boot() {
   $("btn-back").onclick = back;
   $("home-nav").onclick = () => openPicker((prj) => { if (prj) navigateToProject(prj); }, { title: "Naviguoti į projektą", nav: true });
   document.querySelectorAll("[data-go]").forEach((b) => {
     b.onclick = () => {
       const g = b.dataset.go;
-      if (g === "note") initNote(); if (g === "marker") initMarker(); if (g === "expense") initExpense(); if (g === "files") initFiles(); if (g === "contact") initContact(); if (g === "field") initField();
+      if (g === "note") initNote(); if (g === "marker") initMarker(); if (g === "expense") initExpense(); if (g === "files") initFiles(); if (g === "contact") initContact(); if (g === "field") initField(); if (g === "fm") initFm();
       show(g);
     };
   });
@@ -1531,7 +1681,7 @@ async function boot() {
   $("in-cam").onchange = onPhotoInput; $("in-gal").onchange = onPhotoInput;
   $("queue-send").onclick = async () => { await flush(); renderQueue(); };
   $("queue-clean").onclick = async () => { for (const it of await DB.all("queue")) if (it.state === "sent") await DB.del("queue", it.id); renderQueue(); updateBadge(); };
-  bindNote(); bindMarker(); bindExpense(); bindFiles(); bindContact(); bindField(); bindAR(); bindSettings();
+  bindNote(); bindMarker(); bindExpense(); bindFiles(); bindContact(); bindField(); bindFm(); bindAR(); bindSettings();
   window.addEventListener("online", () => { updateBadge(); flush(); });
   window.addEventListener("offline", updateBadge);
   window.addEventListener("popstate", () => {});
