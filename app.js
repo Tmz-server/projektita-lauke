@@ -1588,6 +1588,7 @@ function fmOnData(ev) {
     fm.last = d; fm.lastAt = now;
     $("fm-big").textContent = fmFmt(d);
     $("fm-dist").value = d.toFixed(3).replace(".", ",");
+    fmAbBar(fmab.sel >= 0 ? fmab.sides[fmab.sel] : null);
     try { if (navigator.vibrate) navigator.vibrate(70); } catch (_) { /* */ }
     log("DISTO: " + d.toFixed(4) + " m");
     if ($("fm-auto").checked || fmab.sel >= 0) setTimeout(() => fmAdd("disto"), 0);
@@ -1654,7 +1655,7 @@ async function fmSetProject(prj) {
 }
 
 /* ------------------------------------------------------------------ Abriso juodraštis (pastatų kontūrai 2601/2602 iš DWG) */
-const fmab = { blds: [], sides: [], sel: -1, tol: 0.10, move: false, draw: null, drag: null, tf: null, draft: null };
+const fmab = { blds: [], sides: [], sel: -1, tol: 0.10, move: false, draw: null, drag: null, tf: null, draft: null, full: false };
 const fmDelta = (v) => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(3).replace(".", ",") + " m";
 const FM_KINDS = [["pastatas", "Pastatas", true], ["ukinis", "Ūkinis pastatas / priestatas", true], ["tvora", "Tvora (linija)", false], ["kita", "Kita linija", false], ["kontura", "Kitas kontūras", true]];
 const cp = (pts) => pts.map((p) => [p[0], p[1]]);
@@ -1760,9 +1761,15 @@ function fmAbPtFromEvent(e) {
 function fmAbRender() {
   const card = $("fm-abris"); if (!card) return;
   card.hidden = !fm.project;
+  if (!fm.project) fmab.full = false;
+  card.classList.toggle("full", fmab.full);
+  $("fm-ab-bar").hidden = !fmab.full;
+  $("fm-ab-full").textContent = fmab.full ? "✕ Uždaryti" : "⛶ Planas";
+  try { document.body.style.overflow = fmab.full ? "hidden" : ""; } catch (_) { /* */ }
   const svg = $("fm-ab-svg"), info = $("fm-ab-info");
   svg.innerHTML = "";
   const sel = fmab.sel >= 0 ? fmab.sides[fmab.sel] : null;
+  fmAbBar(sel);
   $("fm-ab-rot").hidden = !sel;
   $("fm-ab-move").classList.toggle("primary", fmab.move);
   $("fm-ab-draw").hidden = !fmab.draw;
@@ -1835,8 +1842,20 @@ function fmAbRender() {
     (fmab.draw ? " · Braižymas: palieskite brėžinį, kad pridėtumėte kampus" :
       sel ? ` · ${sel.from} → ${sel.to}: dabar ${fmFmt(sel.len)}${sel.plan != null ? `, DWG ${fmFmt(sel.plan)}` : ""} – matuokite D2 arba įveskite ilgį` : " · Palieskite kraštinę ir matuokite");
 }
+function fmAbBar(sel) {
+  if (!fmab.full) return;
+  $("fm-ab-sel").textContent = sel ? `Kraštinė ${sel.from} → ${sel.to} · dabar ${fmFmt(sel.len)}${sel.plan != null ? " · DWG " + fmFmt(sel.plan) : ""}` : "Palieskite kraštinę, kurios ilgį matuosite";
+  const inp = $("fm-ab-dist");
+  if (document.activeElement !== inp) inp.value = $("fm-dist").value;
+  $("fm-ab-live").textContent = fm.last != null ? "D2: " + fmFmt(fm.last) : "D2: —";
+  $("fm-ab-conn").textContent = fm.on ? "Atjungti DISTO" : "Prijungti DISTO";
+}
 function fmAbBind() {
   const svg = $("fm-ab-svg");
+  $("fm-ab-full").onclick = () => { fmab.full = !fmab.full; fmAbRender(); try { $("fm-abris").scrollTop = 0; } catch (_) { /* */ } };
+  $("fm-ab-dist").oninput = () => { $("fm-dist").value = $("fm-ab-dist").value; };
+  $("fm-ab-save").onclick = () => { if (fmab.sel < 0) return toast("Pirmiausia palieskite kraštinę", true); $("fm-dist").value = $("fm-ab-dist").value; $("fm-add").click(); };
+  $("fm-ab-conn").onclick = () => $("fm-connect").click();
   svg.addEventListener("pointermove", (e) => {
     if (!fmab.drag) return;
     const p = fmAbPtFromEvent(e); if (!p) return;
