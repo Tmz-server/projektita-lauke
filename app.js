@@ -414,6 +414,15 @@ async function refreshPoints(prj, silent) {
   } catch (e) { log("Taškai: " + e.message); if (!silent) toast("Nepavyko gauti taškų: " + e.message, true); return null; }
 }
 
+async function refreshBuildings(prj, silent) {
+  try {
+    const j = await graphGetJson(`${inboxPath()}/_projektai/${slugPy(prj, 30)}_pastatai.json`);
+    if (!j) { if (!silent) toast("Šio projekto pastatų (kodai 2601/2602) sąrašo nėra – kompiuteryje atidarykite KADMAT taškus.", true); return null; }
+    await cachePut("buildings:" + prj, j); log(`Pastatai ${prj}: ${(j.buildings || []).length}`);
+    return j;
+  } catch (e) { log("Pastatai: " + e.message); if (!silent && !e.authRequired) toast("Nepavyko gauti pastatų: " + e.message, true); return null; }
+}
+
 /* ------------------------------------------------------------------ UI pagrindas */
 const views = ["home", "note", "marker", "expense", "files", "contact", "field", "fm", "queue", "settings"];
 const stack = [];
@@ -1518,7 +1527,7 @@ const FM_SVC = "3ab10100-f831-4395-b29d-570977d5bf94";
 const FM_KEY = "prj_fm_draft";
 const fm = { project: "", items: [], dev: null, server: null, last: null, lastAt: 0, aux: "", on: false, names: [] };
 function fmSaveDraft() {
-  try { localStorage.setItem(FM_KEY, JSON.stringify({ project: fm.project, items: fm.items, from: $("fm-from").value, to: $("fm-to").value, sketch: $("fm-sketch").value, date: fm.date })); } catch (_) { /* ignoruojam */ }
+  try { localStorage.setItem(FM_KEY, JSON.stringify({ project: fm.project, items: fm.items, from: $("fm-from").value, to: $("fm-to").value, sketch: $("fm-sketch").value, date: fm.date, ab: fmab.blds.length ? fmAbExport() : null })); } catch (_) { /* ignoruojam */ }
 }
 function fmLoadDraft() {
   try { const j = JSON.parse(localStorage.getItem(FM_KEY) || "null"); return j && typeof j === "object" ? j : null; } catch (_) { return null; }
@@ -1527,6 +1536,7 @@ const fmFmt = (v) => v.toFixed(3).replace(".", ",") + " m";
 function fmStatus(txt, ok) { $("fm-status").textContent = txt; document.querySelector(".fm-box").classList.toggle("ok", !!ok); }
 function fmNames() {
   const set = new Set(fm.names);
+  fmab.sides.forEach((sd) => { set.add(sd.from); set.add(sd.to); });
   fm.items.forEach((i) => { set.add(i.from); set.add(i.to); });
   $("fm-names").innerHTML = Array.from(set).filter(Boolean).map((n) => `<option value="${esc(n)}">`).join("");
 }
@@ -1536,7 +1546,7 @@ function fmRender() {
   fm.items.forEach((it, i) => {
     const li = document.createElement("li"); li.className = "fm-item";
     li.innerHTML = `<div><div class="t">${esc(it.from)} → ${esc(it.to)} · ${esc(fmFmt(it.dist_m))}</div>` +
-      `<div class="s">${it.source === "disto" ? "DISTO" : "ranka"}${it.note ? " · " + esc(it.note) : ""}</div></div>` +
+      `<div class="s">${it.source === "disto" ? "DISTO" : "ranka"}${it.note ? " · " + esc(it.note) : ""}${it.plan_m ? " · brėžinyje " + esc(fmFmt(it.plan_m)) + " (Δ " + esc(fmDelta(it.dist_m - it.plan_m)) + ")" : ""}</div></div>` +
       `<div class="acts"><button type="button" class="btn small ghost" data-i="${i}" data-a="edit">Taisyti</button><button type="button" class="btn small ghost" data-i="${i}" data-a="del">✕</button></div>`;
     ul.appendChild(li);
   });
@@ -1547,15 +1557,24 @@ function fmRender() {
       fm.items.splice(i, 1); fmRender(); fmNames(); fmSaveDraft();
     };
   });
+  fmAbRender();
 }
 function fmAdd(source) {
   const from = $("fm-from").value.trim(), to = $("fm-to").value.trim(), dist = num($("fm-dist").value);
   if (!from || !to) return toast("Įrašykite „Nuo taško“ ir „Iki taško“", true);
   if (dist == null || !(dist > 0) || dist > 300) return toast("Įrašykite atstumą (0–300 m)", true);
   if (from === to) return toast("„Nuo“ ir „Iki“ negali būti vienodi", true);
-  fm.items.push({ from, to, dist_m: Math.round(dist * 1000) / 1000, note: $("fm-note").value.trim(), source: source || "manual", t: localISO(), aux: fm.aux || "" });
+  const sd = fmAbFind(from, to);
+  const item = { from, to, dist_m: Math.round(dist * 1000) / 1000, note: $("fm-note").value.trim(), source: source || "manual", t: localISO(), aux: fm.aux || "" };
+  if (sd) {
+    if (sd.plan != null) item.plan_m = Math.round(sd.plan * 1000) / 1000;
+    fm.items = fm.items.filter((i) => !fmAbSame(i, sd));   // ta pati kraštinė perrašoma
+    if ($("fm-ab-apply").checked) { fmAbApplyLength(sd, item.dist_m); fmAbBuild(); }
+  }
+  fm.items.push(item);
   $("fm-dist").value = ""; $("fm-note").value = ""; fm.aux = "";
-  if ($("fm-chain").checked) { $("fm-from").value = to; $("fm-to").value = ""; $("fm-to").focus(); }
+  if (sd && fmab.sel >= 0) fmAbNext(fmab.sides.find((x) => x.from === sd.from && x.to === sd.to) || sd);
+  else if ($("fm-chain").checked) { $("fm-from").value = to; $("fm-to").value = ""; $("fm-to").focus(); }
   fmRender(); fmNames(); fmSaveDraft();
 }
 function fmOnData(ev) {
@@ -1571,7 +1590,7 @@ function fmOnData(ev) {
     $("fm-dist").value = d.toFixed(3).replace(".", ",");
     try { if (navigator.vibrate) navigator.vibrate(70); } catch (_) { /* */ }
     log("DISTO: " + d.toFixed(4) + " m");
-    if ($("fm-auto").checked) setTimeout(() => fmAdd("disto"), 0);
+    if ($("fm-auto").checked || fmab.sel >= 0) setTimeout(() => fmAdd("disto"), 0);
   } else if (id.startsWith("3ab10102")) { fm.aux = hex.join(" "); }
 }
 async function fmSubscribe(server) {
@@ -1629,7 +1648,241 @@ async function fmSetProject(prj) {
   setPick($("fm-project"), prj, "Pasirinkite projektą…");
   fm.names = [];
   if (prj) { const d = await cacheGet("points:" + prj); fm.names = ((d && d.points) || []).map((p) => String(p.nr)); }
+  await fmAbLoad(prj);
   fmNames(); fmSaveDraft();
+  if (prj) refreshBuildings(prj, true).then(async (j) => { if (j && fm.project === prj) { fmab.draft = fmab.blds.length ? fmAbExport() : null; await fmAbLoad(prj); fmNames(); } });
+}
+
+/* ------------------------------------------------------------------ Abriso juodraštis (pastatų kontūrai 2601/2602 iš DWG) */
+const fmab = { blds: [], sides: [], sel: -1, tol: 0.10, move: false, draw: null, drag: null, tf: null, draft: null };
+const fmDelta = (v) => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(3).replace(".", ",") + " m";
+const FM_KINDS = [["pastatas", "Pastatas", true], ["ukinis", "Ūkinis pastatas / priestatas", true], ["tvora", "Tvora (linija)", false], ["kita", "Kita linija", false], ["kontura", "Kitas kontūras", true]];
+const cp = (pts) => pts.map((p) => [p[0], p[1]]);
+function fmAbSame(it, sd) { return (it.from === sd.from && it.to === sd.to) || (it.from === sd.to && it.to === sd.from); }
+function fmAbFind(from, to) { return fmab.sides.find((sd) => (sd.from === from && sd.to === to) || (sd.from === to && sd.to === from)) || null; }
+function fmAbItem(sd) { for (let i = fm.items.length - 1; i >= 0; i--) if (fmAbSame(fm.items[i], sd)) return fm.items[i]; return null; }
+function fmAbBuild() {
+  fmab.sides = [];
+  (fmab.blds || []).forEach((b, bi) => {
+    const p = b.pts || [], n = p.length;
+    if (n < 2) return;
+    const m = b.closed ? n : n - 1;
+    for (let i = 0; i < m; i++) {
+      const j = (i + 1) % n, o = b.orig && b.orig.length === n ? b.orig : null;
+      fmab.sides.push({ bi, i, from: `${b.id}-${i + 1}`, to: `${b.id}-${j + 1}`, a: p[i], b: p[j], len: Math.hypot(p[j][0] - p[i][0], p[j][1] - p[i][1]),
+        plan: o ? Math.hypot(o[j][0] - o[i][0], o[j][1] - o[i][1]) : null });
+    }
+  });
+  if (fmab.sel >= fmab.sides.length) fmab.sel = -1;
+}
+function fmAbExport() {
+  return { buildings: fmab.blds.map((b) => ({ id: b.id, code: b.code || "", kind: b.kind || "", extra: !!b.extra, closed: !!b.closed, pts: b.pts.map((p) => [Math.round(p[0] * 1000) / 1000, Math.round(p[1] * 1000) / 1000]),
+    orig_pts: b.orig ? b.orig.map((p) => [p[0], p[1]]) : null })) };
+}
+function fmAbApplyDraft() {
+  const d = fmab.draft; fmab.draft = null;
+  if (!d || !Array.isArray(d.buildings)) return;
+  d.buildings.forEach((e) => {
+    if (e.extra) { fmab.blds.push({ id: e.id, code: e.code || "", kind: e.kind || "", extra: true, closed: !!e.closed, pts: cp(e.pts), orig: null }); return; }
+    const b = fmab.blds.find((x) => x.id === e.id);
+    if (b && b.pts.length === (e.pts || []).length) b.pts = cp(e.pts);
+  });
+}
+async function fmAbLoad(prj) {
+  fmab.sel = -1; fmab.blds = []; fmab.draw = null; fmab.drag = null;
+  if (prj) {
+    try {
+      const d = await cacheGet("buildings:" + prj);
+      fmab.blds = ((d && d.buildings) || []).map((b) => ({ id: b.id, code: b.code || "", kind: "", extra: false, closed: !!b.closed, pts: cp(b.pts), orig: cp(b.pts) }));
+    } catch (_) { /* */ }
+  }
+  fmAbApplyDraft(); fmAbBuild(); fmAbRender();
+}
+function fmAbSelect(i) {
+  if (fmab.draw) return;
+  if (i < 0 || i >= fmab.sides.length || fmab.sel === i) { fmab.sel = -1; fmAbRender(); return; }
+  const sd = fmab.sides[i]; fmab.sel = i;
+  $("fm-from").value = sd.from; $("fm-to").value = sd.to; $("fm-dist").value = "";
+  const it = fmAbItem(sd); if (it) $("fm-dist").value = it.dist_m.toFixed(3).replace(".", ",");
+  fmSaveDraft(); fmAbRender();
+}
+function fmAbNext(sd) {
+  const start = fmab.sides.indexOf(sd);
+  for (let k = 1; k <= fmab.sides.length; k++) {
+    const i = (start + k) % fmab.sides.length, c = fmab.sides[i];
+    if (!fmAbItem(c) && c !== sd) { fmAbSelect(i); return; }
+  }
+  fmab.sel = -1; toast("Visos kraštinės išmatuotos");
+}
+/* Kraštinės ilgis pakeičiamas į išmatuotą: pastumiamas galinis kampas; jei ties juo stačias kampas – ir kitas kampas (stačiakampis išlieka stačiakampiu). */
+function fmAbApplyLength(sd, L) {
+  const b = fmab.blds[sd.bi]; if (!b) return;
+  const n = b.pts.length, i = sd.i, j = (i + 1) % n, A = b.pts[i], B = b.pts[j];
+  const cur = Math.hypot(B[0] - A[0], B[1] - A[1]); if (cur < 1e-6 || !(L > 0)) return;
+  const ux = (B[0] - A[0]) / cur, uy = (B[1] - A[1]) / cur, d = L - cur, mv = [j];
+  const k = (j + 1) % n;
+  if (k !== i && (b.closed || j + 1 < n)) {
+    const C = b.pts[k], cx = C[0] - B[0], cy = C[1] - B[1], cl = Math.hypot(cx, cy);
+    if (cl > 1e-6 && Math.abs((cx * ux + cy * uy) / cl) < 0.0872) mv.push(k);
+  }
+  mv.forEach((m) => { b.pts[m] = [b.pts[m][0] + ux * d, b.pts[m][1] + uy * d]; });
+}
+/* Kraštinės pakreipimas: pivot a = apie pradžią, b = apie pabaigą, m = apie vidurį; deg > 0 – prieš laikrodžio rodyklę */
+function fmAbRotate(sd, deg, pivot) {
+  const b = fmab.blds[sd.bi]; if (!b) return;
+  const n = b.pts.length, i = sd.i, j = (i + 1) % n, A = b.pts[i], B = b.pts[j];
+  const r = deg * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+  const P = pivot === "b" ? B : pivot === "m" ? [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2] : A;
+  const rot = (q) => [P[0] + (q[0] - P[0]) * cs - (q[1] - P[1]) * sn, P[1] + (q[0] - P[0]) * sn + (q[1] - P[1]) * cs];
+  if (pivot !== "b") b.pts[j] = rot(B);
+  if (pivot !== "a") b.pts[i] = rot(A);
+}
+function fmAbGeoChanged() { fmAbBuild(); fmSaveDraft(); fmAbRender(); }
+function fmAbCenter() {
+  const xs = [], ys = [];
+  fmab.blds.forEach((b) => b.pts.forEach((p) => { xs.push(p[0]); ys.push(p[1]); }));
+  return xs.length ? [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2] : [0, 0];
+}
+function fmAbNewId() { let n = 1; const ids = new Set(fmab.blds.map((b) => b.id)); while (ids.has("X" + n)) n++; return "X" + n; }
+function fmAbAddObject(kind, closed, pts) {
+  const id = fmAbNewId();
+  fmab.blds.push({ id, code: "", kind, extra: true, closed, pts: cp(pts), orig: null });
+  fmAbBuild(); fmab.sel = -1; fmSaveDraft(); fmNames(); fmAbRender();
+  toast(`Pridėtas objektas ${id}`);
+  const first = fmab.sides.findIndex((sd) => fmab.blds[sd.bi].id === id); if (first >= 0) fmAbSelect(first);
+}
+function fmAbPtFromEvent(e) {
+  const svg = $("fm-ab-svg"), m = svg.getScreenCTM(); if (!m || !fmab.tf) return null;
+  const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
+  const q = pt.matrixTransform(m.inverse());
+  return [q.x + fmab.tf.minx, fmab.tf.maxy - q.y];
+}
+function fmAbRender() {
+  const card = $("fm-abris"); if (!card) return;
+  card.hidden = !fm.project;
+  const svg = $("fm-ab-svg"), info = $("fm-ab-info");
+  svg.innerHTML = "";
+  const sel = fmab.sel >= 0 ? fmab.sides[fmab.sel] : null;
+  $("fm-ab-rot").hidden = !sel;
+  $("fm-ab-move").classList.toggle("primary", fmab.move);
+  $("fm-ab-draw").hidden = !fmab.draw;
+  $("fm-ab-del").hidden = !(sel && fmab.blds[sel.bi] && fmab.blds[sel.bi].extra);
+  const drawPts = fmab.draw ? fmab.draw.pts : [];
+  if (!fmab.blds.length && !drawPts.length) {
+    svg.setAttribute("hidden", "");
+    info.textContent = fm.project ? "Šiam projektui pastatų (kodai 2601/2602) nėra – kompiuteryje KADMAT taškų lange spauskite „Abriso pastatai…“. Objektus galima pridėti ranka: ＋ Objektas." : "";
+    return;
+  }
+  svg.removeAttribute("hidden");
+  const xs = [], ys = [];
+  fmab.blds.forEach((b) => b.pts.forEach((p) => { xs.push(p[0]); ys.push(p[1]); }));
+  drawPts.forEach((p) => { xs.push(p[0]); ys.push(p[1]); });
+  const minx = Math.min(...xs), maxx = Math.max(...xs), miny = Math.min(...ys), maxy = Math.max(...ys);
+  const w = Math.max(maxx - minx, 1), h = Math.max(maxy - miny, 1), pad = Math.max(w, h) * 0.16;
+  const vbw = w + 2 * pad, vbh = h + 2 * pad, fs = Math.max(vbw, vbh) * 0.036, sw = fs * 0.16;
+  fmab.tf = { minx, maxy };
+  svg.setAttribute("viewBox", `${-pad} ${-pad} ${vbw} ${vbh}`);
+  const X = (x) => (x - minx), Y = (y) => (maxy - y);
+  const NS = "http://www.w3.org/2000/svg";
+  const mk = (tag, attrs, txt) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (txt != null) e.textContent = txt; svg.appendChild(e); return e; };
+  const cs = getComputedStyle(document.documentElement);
+  const col = (v, d) => (cs.getPropertyValue(v) || d).trim() || d;
+  const cPri = col("--primary", "#393187"), cMut = col("--muted", "#5d6079"), cAcc = col("--accent", "#e8201f"), cWarn = col("--warn", "#c4161c"), cSoft = col("--primary-soft", "#e8e7f5");
+  const bg = mk("rect", { x: -pad, y: -pad, width: vbw, height: vbh, fill: "transparent" });
+  bg.addEventListener("click", (e) => {
+    if (!fmab.draw) return;
+    const p = fmAbPtFromEvent(e); if (!p) return;
+    fmab.draw.pts.push(p); fmAbRender();
+  });
+  const cen = fmab.blds.map((b) => { const p = b.pts; return [p.reduce((a, q) => a + q[0], 0) / p.length, p.reduce((a, q) => a + q[1], 0) / p.length]; });
+  fmab.blds.forEach((b, bi) => {
+    if (b.orig && fmab.blds[bi].pts.some((p, k) => Math.abs(p[0] - b.orig[k][0]) > 0.005 || Math.abs(p[1] - b.orig[k][1]) > 0.005))
+      mk("polyline", { points: b.orig.concat(b.closed ? [b.orig[0]] : []).map((p) => `${X(p[0])},${Y(p[1])}`).join(" "), fill: "none", stroke: cMut, "stroke-width": sw * 0.6, "stroke-dasharray": `${sw * 1.5} ${sw * 1.5}`, opacity: "0.45" });
+    if (b.closed) mk("polygon", { points: b.pts.map((p) => `${X(p[0])},${Y(p[1])}`).join(" "), fill: b.extra ? cWarn : cSoft, "fill-opacity": b.extra ? "0.12" : "0.55", stroke: "none" });
+    mk("text", { x: X(cen[bi][0]), y: Y(cen[bi][1]), "text-anchor": "middle", "font-size": fs * 1.1, fill: cMut, "font-weight": "700", opacity: "0.6" }, b.id);
+  });
+  let done = 0, bad = 0;
+  fmab.sides.forEach((sd, i) => {
+    const x1 = X(sd.a[0]), y1 = Y(sd.a[1]), x2 = X(sd.b[0]), y2 = Y(sd.b[1]);
+    const it = fmAbItem(sd), isel = i === fmab.sel, ex = fmab.blds[sd.bi].extra;
+    let stroke = ex ? cWarn : cMut, txt = sd.len.toFixed(2).replace(".", ","), tcol = stroke;
+    if (it) {
+      done++; txt = it.dist_m.toFixed(2).replace(".", ",");
+      const ok = sd.plan == null || Math.abs(it.dist_m - sd.plan) <= fmab.tol; if (!ok) bad++;
+      stroke = ok ? cPri : cWarn; tcol = stroke;
+    }
+    mk("line", { x1, y1, x2, y2, stroke: isel ? cAcc : stroke, "stroke-width": isel ? sw * 2.2 : sw * (it ? 1.6 : 1), "stroke-linecap": "round", "stroke-dasharray": it || isel ? "none" : `${sw * 3} ${sw * 2}` });
+    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2, cx = X(cen[sd.bi][0]), cy = Y(cen[sd.bi][1]);
+    let nx = mx - cx, ny = my - cy; const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
+    mk("text", { x: mx + nx * fs * 1.0, y: my + ny * fs * 1.0 + fs * 0.35, "text-anchor": "middle", "font-size": fs, fill: isel ? cAcc : tcol, "font-weight": it || isel ? "700" : "400" }, txt);
+    const hit = mk("line", { x1, y1, x2, y2, stroke: "transparent", "stroke-width": fs * 2.2, "stroke-linecap": "round", style: "cursor:pointer" });
+    hit.addEventListener("click", () => fmAbSelect(i));
+  });
+  fmab.blds.forEach((b, bi) => b.pts.forEach((p, k) => {
+    mk("circle", { cx: X(p[0]), cy: Y(p[1]), r: sw * 1.2, fill: fmab.move ? cAcc : cMut });
+    let nx = X(p[0]) - X(cen[bi][0]), ny = Y(p[1]) - Y(cen[bi][1]); const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
+    mk("text", { x: X(p[0]) + nx * fs * 0.85, y: Y(p[1]) + ny * fs * 0.85 + fs * 0.3, "text-anchor": "middle", "font-size": fs * 0.78, fill: cMut, opacity: "0.8" }, String(k + 1));
+    if (fmab.move && !fmab.draw) {
+      const hd = mk("circle", { cx: X(p[0]), cy: Y(p[1]), r: fs * 1.15, fill: "transparent", stroke: cAcc, "stroke-width": sw * 0.5, "stroke-opacity": "0.5", style: "touch-action:none;cursor:grab" });
+      hd.addEventListener("pointerdown", (e) => { e.preventDefault(); fmab.drag = { bi, k }; try { svg.setPointerCapture(e.pointerId); } catch (_) { /* */ } });
+    }
+  }));
+  if (drawPts.length) {
+    mk("polyline", { points: drawPts.map((p) => `${X(p[0])},${Y(p[1])}`).join(" "), fill: "none", stroke: cAcc, "stroke-width": sw * 1.4, "stroke-linejoin": "round" });
+    drawPts.forEach((p) => mk("circle", { cx: X(p[0]), cy: Y(p[1]), r: sw * 1.6, fill: cAcc }));
+  }
+  info.textContent = `Objektų: ${fmab.blds.length}, kraštinių: ${fmab.sides.length}, išmatuota: ${done}` + (bad ? `, nukrypsta >${Math.round(fmab.tol * 100)} cm: ${bad}` : "") +
+    (fmab.draw ? " · Braižymas: palieskite brėžinį, kad pridėtumėte kampus" :
+      sel ? ` · ${sel.from} → ${sel.to}: dabar ${fmFmt(sel.len)}${sel.plan != null ? `, DWG ${fmFmt(sel.plan)}` : ""} – matuokite D2 arba įveskite ilgį` : " · Palieskite kraštinę ir matuokite");
+}
+function fmAbBind() {
+  const svg = $("fm-ab-svg");
+  svg.addEventListener("pointermove", (e) => {
+    if (!fmab.drag) return;
+    const p = fmAbPtFromEvent(e); if (!p) return;
+    const b = fmab.blds[fmab.drag.bi]; if (!b) return;
+    b.pts[fmab.drag.k] = p; fmAbBuild(); fmAbRender();
+  });
+  const end = () => { if (fmab.drag) { fmab.drag = null; fmSaveDraft(); } };
+  svg.addEventListener("pointerup", end); svg.addEventListener("pointercancel", end);
+  $("fm-ab-len").onclick = () => { if (fmab.sel < 0) return toast("Pirmiausia palieskite kraštinę brėžinyje", true); $("fm-dist").focus(); $("fm-dist").scrollIntoView({ block: "center" }); };
+  $("fm-ab-move").onclick = () => { fmab.move = !fmab.move; fmAbRender(); toast(fmab.move ? "Kampus galima tempti pirštu" : "Kampų tempimas išjungtas"); };
+  const rot = (sign) => { const sd = fmab.sides[fmab.sel]; if (!sd) return; fmAbRotate(sd, sign * parseFloat($("fm-ab-step").value), $("fm-ab-pivot").value); fmAbGeoChanged(); };
+  $("fm-ab-ccw").onclick = () => rot(1); $("fm-ab-cw").onclick = () => rot(-1);
+  $("fm-ab-del").onclick = () => {
+    const sd = fmab.sides[fmab.sel]; if (!sd) return; const b = fmab.blds[sd.bi]; if (!b || !b.extra) return;
+    if (!confirm(`Šalinti objektą ${b.id}?`)) return;
+    fm.items = fm.items.filter((it) => !(it.from.startsWith(b.id + "-") && it.to.startsWith(b.id + "-")));
+    fmab.blds.splice(sd.bi, 1); fmab.sel = -1; fmAbBuild(); fmRender(); fmSaveDraft(); fmNames();
+  };
+  $("fm-ab-add").onclick = () => { $("fm-ab-new").hidden = !$("fm-ab-new").hidden; };
+  $("fm-ab-kind").innerHTML = FM_KINDS.map((k) => `<option value="${k[0]}">${k[1]}</option>`).join("");
+  $("fm-ab-how").onchange = () => { $("fm-ab-dims").hidden = $("fm-ab-how").value !== "rect"; };
+  $("fm-ab-create").onclick = () => {
+    const kind = $("fm-ab-kind").value, closed = FM_KINDS.find((k) => k[0] === kind)[2];
+    if ($("fm-ab-how").value === "rect") {
+      const L = num($("fm-ab-l").value), W = num($("fm-ab-w").value);
+      if (!(L > 0) || (closed && !(W > 0))) return toast("Įrašykite ilgį" + (closed ? " ir plotį" : ""), true);
+      const c = fmAbCenter();
+      const pts = closed ? [[c[0] - L / 2, c[1] - W / 2], [c[0] + L / 2, c[1] - W / 2], [c[0] + L / 2, c[1] + W / 2], [c[0] - L / 2, c[1] + W / 2]] : [[c[0] - L / 2, c[1]], [c[0] + L / 2, c[1]]];
+      $("fm-ab-new").hidden = true; fmAbAddObject(kind, closed, pts);
+    } else {
+      fmab.draw = { kind, closed, pts: [] }; $("fm-ab-new").hidden = true; fmab.sel = -1; fmAbRender();
+    }
+  };
+  const fin = (closed) => {
+    const d = fmab.draw; if (!d) return;
+    if (d.pts.length < (closed ? 3 : 2)) return toast(closed ? "Reikia bent 3 kampų" : "Reikia bent 2 taškų", true);
+    fmab.draw = null; fmAbAddObject(d.kind, closed, d.pts);
+  };
+  $("fm-ab-fin-c").onclick = () => fin(true); $("fm-ab-fin-o").onclick = () => fin(false);
+  $("fm-ab-undo").onclick = () => { if (fmab.draw) { fmab.draw.pts.pop(); fmAbRender(); } };
+  $("fm-ab-cancel").onclick = () => { fmab.draw = null; fmAbRender(); };
+  $("fm-ab-reset").onclick = async () => {
+    if (!confirm("Atstatyti pradinį brėžinį iš DWG ir pašalinti pridėtus objektus? Matavimų sąrašas nebus keičiamas.")) return;
+    fmab.draft = null; await fmAbLoad(fm.project); fmSaveDraft();
+  };
+  $("fm-ab-refresh").onclick = async () => { if (!fm.project) return toast("Pasirinkite projektą", true); const keep = fmAbExport(); await refreshBuildings(fm.project, false); fmab.draft = keep; await fmAbLoad(fm.project); fmNames(); };
 }
 function initFm() {
   fm.items = []; fm.date = todayISO();
@@ -1639,14 +1892,17 @@ function initFm() {
   if (dr && ((dr.items && dr.items.length) || dr.project)) {
     fm.items = Array.isArray(dr.items) ? dr.items : []; fm.date = dr.date || todayISO();
     $("fm-from").value = dr.from || ""; $("fm-to").value = dr.to || ""; $("fm-sketch").value = dr.sketch || "";
+    fmab.draft = dr.ab || null;
     if (dr.project) fmSetProject(dr.project);
     if (fm.items.length) toast("Atkurtas nebaigtas matavimas (" + fm.items.length + " atkarp.)");
   }
   if (!fm.on) { $("fm-connect").textContent = "Prijungti DISTO"; fmStatus(navigator.bluetooth ? "DISTO neprijungtas (galima ir įvesti ranka)" : "Bluetooth nepalaikomas – atstumus įveskite ranka"); }
   $("fm-big").textContent = fm.last != null ? fmFmt(fm.last) : "—";
+  fmab.sel = -1; fmab.blds = []; fmab.sides = []; fmab.draw = null; fmab.move = false;
   fmRender(); fmNames();
 }
 function bindFm() {
+  fmAbBind();
   $("fm-project").onclick = () => openPicker((p) => fmSetProject(p), { title: "Projektas (lauko matavimas)" });
   $("fm-connect").onclick = () => { if (fm.on) fmDisconnect(); else fmConnect(); };
   $("fm-add").onclick = () => fmAdd($("fm-dist").value && fm.last != null && Math.abs(num($("fm-dist").value) - fm.last) < 0.0006 ? "disto" : "manual");
@@ -1656,7 +1912,7 @@ function bindFm() {
     if (!fm.project) return toast("Pasirinkite projektą", true);
     if (!fm.items.length) return toast("Įrašykite bent vieną atkarpą", true);
     const total = fm.items.reduce((s, i) => s + i.dist_m, 0);
-    await enqueue("field_measure", { project_no: fm.project, measure_date: fm.date || todayISO(), sketch_note: $("fm-sketch").value.trim(), items: fm.items },
+    await enqueue("field_measure", { project_no: fm.project, measure_date: fm.date || todayISO(), sketch_note: $("fm-sketch").value.trim(), items: fm.items, abris: fmab.blds.length ? fmAbExport() : null },
       [], `${fm.project}: lauko matavimas, ${fm.items.length} atkarp., ${total.toFixed(2).replace(".", ",")} m`);
     try { localStorage.removeItem(FM_KEY); } catch (_) { /* */ }
     fm.items = []; toast("Matavimas įrašytas į eilę"); stack.length = 0; show("home");
