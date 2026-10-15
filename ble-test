@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="lt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DISTO Bluetooth testas</title>
+<style>
+  :root{--bg:#f4f6f8;--fg:#1b2733;--card:#fff;--ok:#1b7f3b;--warn:#b26a00;--bad:#b3261e;--mut:#5b6b7a}
+  @media (prefers-color-scheme:dark){:root{--bg:#10161c;--fg:#e8eef3;--card:#1a232c;--ok:#5fd183;--warn:#ffb74d;--bad:#ff8a80;--mut:#98a8b6}}
+  body{margin:0;padding:16px;background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,sans-serif}
+  h1{font-size:20px;margin:0 0 4px}
+  p.hint{color:var(--mut);margin:0 0 12px;font-size:14px}
+  .card{background:var(--card);border-radius:12px;padding:12px 14px;margin-bottom:12px}
+  .row{display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-bottom:1px solid rgba(128,128,128,.15)}
+  .row:last-child{border:0}
+  .row span:first-child{color:var(--mut)}
+  .big{font-size:34px;font-weight:700}
+  .verdict{font-size:18px;font-weight:700}
+  .ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+  button{font:inherit;padding:10px 14px;border-radius:10px;border:1px solid rgba(128,128,128,.4);background:var(--card);color:var(--fg);margin:2px 6px 2px 0}
+  button.main{font-weight:700}
+  pre{margin:0;white-space:pre-wrap;word-break:break-all;font-size:12px;max-height:260px;overflow:auto}
+  code{font-size:13px}
+</style>
+</head>
+<body>
+<h1>DISTO Bluetooth testas</h1>
+<p class="hint">Patikrina, ar telefonas per Bluetooth gauna atstumus iš „Leica DISTO“ (D2 ir pan.). Veikia „Chrome“ „Android“ telefone. Prieš spausdami mygtuką įjunkite DISTO Bluetooth (mėlynas Bluetooth mygtukas ant prietaiso – ekrane turi atsirasti Bluetooth ženklas).</p>
+
+<div class="card">
+  <div id="verdict" class="verdict">Neprijungta</div>
+  <div id="dist" class="big">—</div>
+</div>
+
+<div class="card">
+  <button id="btnConnect" class="main">Prijungti DISTO</button>
+  <button id="btnAll">Rodyti visus Bluetooth įrenginius</button>
+  <button id="btnDisc">Atjungti</button>
+  <div id="msg" class="hint" style="margin-top:8px"></div>
+</div>
+
+<div class="card">
+  <div class="row"><span>Įrenginys</span><span id="name">—</span></div>
+  <div class="row"><span>Baterija, %</span><span id="bat">—</span></div>
+  <div class="row"><span>Matavimų gauta</span><span id="count">0</span></div>
+  <div class="row"><span>Paskutinis atstumas, m</span><span id="last">—</span></div>
+  <div class="row"><span>Žali baitai (hex)</span><span id="hex" style="word-break:break-all;text-align:right">—</span></div>
+  <div class="row"><span>Charakteristika</span><span id="chr" style="word-break:break-all;text-align:right">—</span></div>
+</div>
+
+<div class="card">
+  <div class="hint" style="margin-bottom:6px">Žurnalas (kopijuokite ir atsiųskite man, jei kas nors neveikia)</div>
+  <pre id="log"></pre>
+  <div style="margin-top:8px"><button id="btnCopy">Kopijuoti žurnalą</button><button id="btnClear">Išvalyti</button></div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  var $=function(i){return document.getElementById(i)};
+  // Leica DISTO (Bluetooth Smart) paslauga ir „BASIC_MEASUREMENT“ charakteristika (bendruomenės šaltiniai; patikrinama šiuo testu)
+  var SVC='3ab10100-f831-4395-b29d-570977d5bf94';
+  var CHR_MEAS='3ab1010d-f831-4395-b29d-570977d5bf94';
+  var dev=null,server=null,count=0,lines=[];
+  function log(s){
+    var t=new Date().toLocaleTimeString('lt-LT')+'  '+s;
+    lines.push(t);if(lines.length>300)lines.shift();
+    $('log').textContent=lines.join('\n');$('log').scrollTop=1e9;
+  }
+  function hex(dv){var o=[];for(var i=0;i<dv.byteLength;i++)o.push(('0'+dv.getUint8(i).toString(16)).slice(-2));return o.join(' ')}
+  function setV(cls,t){var v=$('verdict');v.className='verdict '+cls;v.textContent=t}
+
+  function onMeas(ev){
+    var c=ev.target,dv=c.value,id=c.uuid;
+    var h=hex(dv);
+    var f0=dv.byteLength>=4?dv.getFloat32(0,true):null;
+    var f4=dv.byteLength>=8?dv.getFloat32(4,true):null;
+    log('ĮEINA '+id.slice(0,8)+' ['+dv.byteLength+' B] '+h+(f0!=null?'  float@0='+f0.toFixed(4):'')+(f4!=null?'  float@4='+f4.toFixed(4):''));
+    $('hex').textContent=h;$('chr').textContent=id.slice(0,8);
+    // Tikėtinas matavimas: 4 baitų slankiojo kablelio skaičius metrais (0.01 – 300 m)
+    if(f0!=null&&isFinite(f0)&&f0>0.01&&f0<300){
+      count++;$('count').textContent=count;
+      $('dist').textContent=f0.toFixed(3)+' m';$('last').textContent=f0.toFixed(3);
+      setV('ok','Gautas atstumas');
+    }
+  }
+
+  async function start(acceptAll){
+    if(!navigator.bluetooth){setV('bad','Naršyklė nepalaiko Bluetooth');$('msg').textContent='Naudokite „Chrome“ „Android“ telefone (ne „iPhone“, ne „Firefox“).';return}
+    $('msg').textContent='';
+    try{
+      var opts=acceptAll?{acceptAllDevices:true,optionalServices:[SVC,'battery_service','device_information']}
+                         :{filters:[{namePrefix:'DISTO'},{namePrefix:'Leica'},{services:[SVC]}],optionalServices:[SVC,'battery_service','device_information']};
+      log('Ieškoma įrenginio'+(acceptAll?' (visi)':' (DISTO / Leica)')+'…');
+      setV('warn','Pasirinkite įrenginį sąraše…');
+      dev=await navigator.bluetooth.requestDevice(opts);
+      $('name').textContent=dev.name||dev.id;
+      log('Pasirinktas: '+(dev.name||'(be vardo)')+' id='+dev.id);
+      dev.addEventListener('gattserverdisconnected',function(){setV('warn','Ryšys nutrūko');log('Ryšys nutrūko')});
+      setV('warn','Jungiamasi…');
+      server=await dev.gatt.connect();
+      log('GATT prijungta');
+      var svcs=[];
+      try{svcs=await server.getPrimaryServices()}catch(e){log('getPrimaryServices: '+e.message)}
+      log('Paslaugos: '+svcs.map(function(s){return s.uuid}).join(', '));
+      try{
+        var b=await (await server.getPrimaryService('battery_service')).getCharacteristic('battery_level');
+        $('bat').textContent=(await b.readValue()).getUint8(0);
+      }catch(e){log('Baterija nepaskaityta: '+e.message)}
+      var svc=null;
+      try{svc=await server.getPrimaryService(SVC)}catch(e){log('Leica paslauga nerasta: '+e.message)}
+      if(!svc){setV('bad','Leica paslauga nerasta');$('msg').textContent='Šis įrenginys nėra Leica DISTO Bluetooth Smart arba jungtis kitokia. Atsiųskite žurnalą.';return}
+      var chars=await svc.getCharacteristics();
+      var n=0;
+      for(var i=0;i<chars.length;i++){
+        var c=chars[i],p=c.properties,flags=[];
+        ['read','write','writeWithoutResponse','notify','indicate'].forEach(function(k){if(p[k])flags.push(k)});
+        log('Charakteristika '+c.uuid.slice(0,8)+' ['+flags.join(',')+']');
+        if(p.notify||p.indicate){
+          try{
+            c.addEventListener('characteristicvaluechanged',onMeas);
+            await c.startNotifications();n++;
+            log('  prenumeruota '+c.uuid.slice(0,8));
+          }catch(e){log('  nepavyko prenumeruoti '+c.uuid.slice(0,8)+': '+e.message)}
+        }
+      }
+      setV('ok','Prijungta – matuokite (ON/DIST)');
+      $('msg').textContent='Prenumeruota charakteristikų: '+n+'. Paspauskite ant DISTO ON/DIST ir išmatuokite atstumą.';
+    }catch(e){
+      log('KLAIDA: '+e.name+': '+e.message);
+      setV('bad','Nepavyko prisijungti');
+      $('msg').textContent=(e.name==='NotFoundError'?'Įrenginys nepasirinktas arba nerastas. Pabandykite „Rodyti visus Bluetooth įrenginius“.':e.message);
+    }
+  }
+  $('btnConnect').onclick=function(){start(false)};
+  $('btnAll').onclick=function(){start(true)};
+  $('btnDisc').onclick=function(){try{if(dev&&dev.gatt.connected)dev.gatt.disconnect()}catch(e){};setV('warn','Atjungta')};
+  $('btnClear').onclick=function(){lines=[];$('log').textContent=''};
+  $('btnCopy').onclick=function(){
+    var t='DISTO BLE testas '+new Date().toISOString()+'\n'+navigator.userAgent+'\n'+lines.join('\n');
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(t).then(function(){$('msg').textContent='Žurnalas nukopijuotas.'},function(){$('msg').textContent='Nepavyko kopijuoti.'});
+    }else{$('msg').textContent='Naršyklė neleidžia kopijuoti.'}
+  };
+  log('Puslapis paruoštas. Bluetooth palaikymas: '+(navigator.bluetooth?'taip':'ne'));
+})();
+</script>
+</body>
+</html>
