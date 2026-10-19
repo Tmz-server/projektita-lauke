@@ -1229,6 +1229,7 @@ function showLpPop(p) {
   const rows = keys.map((k) => {
     let v = String(at[k]);
     if (k === "Bukle" && col[2]) v += " (" + col[2] + ")";
+    if (/^[xy]1$/i.test(k) && v.trim() !== "" && isFinite(Number(v.replace(",", ".")))) v = fmt2(Number(v.replace(",", ".")));   // tik rodymui: X1/Y1 su 2 skaitmenimis po kablelio
     const val = /^https?:\/\//i.test(v) ? `<a href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a>` : esc(v);
     return `<tr><td>${esc(k)}</td><td>${val}</td></tr>`;
   }).join("");
