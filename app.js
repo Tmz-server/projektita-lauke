@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.9.2";
+const VERSION = "1.10.0";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -901,8 +901,243 @@ function fieldTest() {
   }, (e) => { reset(); toast("Padėtis negauta: " + e.message + ". Leiskite naršyklei naudoti vietą.", true); },
   { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
 }
-/* „Mano vieta“: telefonas nusiunčia dabartinę padėtį, kompiuteris „Ribos“ SHP (sklypai.shp) suranda sklypą ir
-   besiribojančius sklypus (tarpas ≤ 0,5 m), o jei SHP / sklypo nėra – grąžina priežastį. */
+/* ---- Sklypai tiesiai iš OneDrive „Ribos“ (kai kompiuteris išjungtas) ----
+   NAVAROTAI/Ribos/<rajonas>/sklypai.shp (+ .shx, .dbf, LKS94). Telefonas: 1) pagal .shx antraštę (100 B) sužino kiekvieno rajono ribas
+   (įsimenama), 2) atsisiunčia sluoksnio .shp / .shx, kurio ribose yra jūsų padėtis (įsimenama telefone), 3) suranda sklypą ir
+   besiribojančius, 4) kadastro numerius paima tik iš reikalingų .dbf įrašų (Range užklausos – didžiojo .dbf nesiunčia). */
+const RIBOS = { dir: "NAVAROTAI/Ribos", snap: 30, tol: 0.5, maxNb: 60, idxDays: 120, keep: 3 };
+function wgsToLks94(lat, lon) {
+  const a = 6378137.0, f = 1 / 298.257222101, e2 = f * (2 - f), ep2 = e2 / (1 - e2), k0 = 0.9998, E0 = 500000.0, lam0 = 24 * Math.PI / 180;
+  const p = lat * Math.PI / 180, l = lon * Math.PI / 180, s = Math.sin(p), c = Math.cos(p), t = Math.tan(p);
+  const N = a / Math.sqrt(1 - e2 * s * s), T = t * t, C = ep2 * c * c, A = (l - lam0) * c;
+  const M = a * ((1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256) * p - (3 * e2 / 8 + 3 * e2 ** 2 / 32 + 45 * e2 ** 3 / 1024) * Math.sin(2 * p) +
+    (15 * e2 ** 2 / 256 + 45 * e2 ** 3 / 1024) * Math.sin(4 * p) - (35 * e2 ** 3 / 3072) * Math.sin(6 * p));
+  const E = E0 + k0 * N * (A + (1 - T + C) * A ** 3 / 6 + (5 - 18 * T + T * T + 72 * C - 58 * ep2) * A ** 5 / 120);
+  const Nn = k0 * (M + N * t * (A * A / 2 + (5 - T + 9 * C + 4 * C * C) * A ** 4 / 24 + (61 - 58 * T + T * T + 600 * C - 330 * ep2) * A ** 6 / 720));
+  return [E, Nn];
+}
+/* atskira IndexedDB (didelėms SHP kopijoms; pagrindinė „cache“ lentelė pakraunama visa, todėl jos čia nenaudojame) */
+const RDB = {
+  db: null,
+  open() {
+    if (this.db) return Promise.resolve(this.db);
+    return new Promise((res, rej) => {
+      const q = indexedDB.open("projektita-ribos", 1);
+      q.onupgradeneeded = () => q.result.createObjectStore("f");
+      q.onsuccess = () => { this.db = q.result; res(this.db); };
+      q.onerror = () => rej(q.error);
+    });
+  },
+  async tx(mode, fn) { const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction("f", mode), r = fn(t.objectStore("f")); t.oncomplete = () => res(r && r.result); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); }); },
+  get(k) { return this.tx("readonly", (s) => s.get(k)); },
+  put(k, v) { return this.tx("readwrite", (s) => s.put(v, k)); },
+  del(k) { return this.tx("readwrite", (s) => s.delete(k)); },
+};
+async function ribosItem(rel) {
+  const m = await graphFetch(`${GRAPH}/me/drive/root:/${encPath(rel)}?select=id,size,eTag,@microsoft.graph.downloadUrl`, { method: "GET" });
+  if (m.status === 404) return null;
+  if (!m.ok) throw httpErr(m, await m.text());
+  const j = await m.json();
+  return { dl: j["@microsoft.graph.downloadUrl"] || "", etag: j.eTag || "", size: j.size || 0, rel };
+}
+async function ribosRange(it, a, b) {
+  if (!it.dl) throw new Error("OneDrive nedavė atsisiuntimo nuorodos");
+  const r = await fetch(it.dl, { headers: { Range: `bytes=${a}-${b}` } });
+  if (r.status === 206) return r.arrayBuffer();
+  if (r.status === 200 && it.size && it.size <= 4 * 1024 * 1024) { const buf = await r.arrayBuffer(); return buf.slice(a, b + 1); }
+  try { if (r.body) r.body.cancel(); } catch (_) { /* */ }
+  throw new Error("Range užklausa: HTTP " + r.status);
+}
+async function ribosDownload(it, label) {
+  const r = await fetch(it.dl);
+  if (!r.ok) throw new Error("Atsisiuntimas: HTTP " + r.status);
+  const total = it.size || Number(r.headers.get("Content-Length")) || 0;
+  if (!r.body || !r.body.getReader) return r.arrayBuffer();
+  const rd = r.body.getReader(), parts = []; let got = 0, lastT = 0;
+  for (;;) {
+    const { done, value } = await rd.read(); if (done) break;
+    parts.push(value); got += value.length;
+    const now = Date.now();
+    if (now - lastT > 400) { lastT = now; setWaitBanner(`Siunčiamas sluoksnis „${label}“: ${(got / 1048576).toFixed(1)}${total ? " / " + (total / 1048576).toFixed(1) : ""} MB (tik pirmą kartą)…`); }
+  }
+  const out = new Uint8Array(got); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
+  return out.buffer;
+}
+async function ribosFolders() {
+  const names = []; let url = `${GRAPH}/me/drive/root:/${encPath(RIBOS.dir)}:/children?$select=name,folder&$top=200`;
+  while (url) {
+    const r = await graphFetch(url, { method: "GET" });
+    if (r.status === 404) throw new Error(`OneDrive nerastas aplankas ${RIBOS.dir}`);
+    if (!r.ok) throw httpErr(r, await r.text());
+    const j = await r.json();
+    for (const x of j.value || []) if (x.folder && !/\.gdb$/i.test(x.name) && !/^[_.]/.test(x.name)) names.push(x.name);
+    url = j["@odata.nextLink"] || "";
+  }
+  return names;
+}
+/* rajonų sluoksnių gaubtiniai (LKS94) iš .shx antraštės; įsimenami telefone */
+async function ribosIndex(force) {
+  let idx = await cacheGet("ribos_idx");
+  if (!force && idx && idx.v === 1 && Date.now() - idx.t < RIBOS.idxDays * 86400000 && (idx.layers || []).length) return idx;
+  const names = await ribosFolders(), layers = [];
+  let done = 0;
+  const work = async (name) => {
+    try {
+      const it = await ribosItem(`${RIBOS.dir}/${name}/sklypai.shx`);
+      if (it && it.dl) {
+        const h = await ribosRange(it, 0, 99), dv = new DataView(h);
+        const bb = [dv.getFloat64(36, true), dv.getFloat64(44, true), dv.getFloat64(52, true), dv.getFloat64(60, true)];
+        if (bb.every(isFinite) && bb[2] > bb[0]) layers.push({ name, bbox: bb });
+      }
+    } catch (e) { log("Ribos " + name + ": " + e.message); }
+    done++; setWaitBanner(`Tikrinami „Ribos“ sluoksniai (${done}/${names.length}) – tik pirmą kartą…`);
+  };
+  const q = names.slice(); await Promise.all(Array.from({ length: 6 }, async () => { while (q.length) await work(q.shift()); }));
+  idx = { v: 1, t: Date.now(), layers };
+  await cachePut("ribos_idx", idx);
+  return idx;
+}
+/* sluoksnio SHP / SHX kopija telefone (atnaujinama pasikeitus failui OneDrive) */
+async function ribosLayerData(name) {
+  const key = "l:" + name;
+  const shp = await ribosItem(`${RIBOS.dir}/${name}/sklypai.shp`);
+  if (!shp) throw new Error(`Rajone „${name}“ nėra sklypai.shp`);
+  let c = null; try { c = await RDB.get(key); } catch (_) { /* */ }
+  if (c && c.etag === shp.etag && c.shp && c.shx) { c.t = Date.now(); try { await RDB.put(key, c); } catch (_) { /* */ } return { shp: c.shp, shx: c.shx, cached: true }; }
+  const shx = await ribosItem(`${RIBOS.dir}/${name}/sklypai.shx`);
+  const shpBuf = await ribosDownload(shp, name);
+  const shxBuf = shx ? await ribosDownload(shx, name) : null;
+  const rec = { etag: shp.etag, shp: shpBuf, shx: shxBuf, t: Date.now() };
+  try {
+    await RDB.put(key, rec);
+    const lru = (await RDB.get("lru")) || []; const nl = [name].concat(lru.filter((x) => x !== name));
+    for (const old of nl.slice(RIBOS.keep)) { try { await RDB.del("l:" + old); } catch (_) { /* */ } }
+    await RDB.put("lru", nl.slice(0, RIBOS.keep));
+  } catch (e) { log("Ribos kopijos išsaugoti nepavyko: " + e.message); }
+  return { shp: shpBuf, shx: shxBuf, cached: false };
+}
+function ribosOffsets(shp, shx) {
+  const out = [];
+  if (shx) { const sv = new DataView(shx), n = Math.floor((shx.byteLength - 100) / 8); for (let i = 0; i < n; i++) out.push(sv.getInt32(100 + i * 8, false) * 2); }
+  else { const dv = new DataView(shp); let p = 100; while (p + 8 <= shp.byteLength) { out.push(p); p += 8 + dv.getInt32(p + 4, false) * 2; } }
+  return out;
+}
+const RIBOS_POLY = new Set([3, 5, 13, 15, 23, 25]);
+function ribosRecBBox(dv, off) { const p = off + 8; if (p + 36 > dv.byteLength || !RIBOS_POLY.has(dv.getInt32(p, true))) return null; return [dv.getFloat64(p + 4, true), dv.getFloat64(p + 12, true), dv.getFloat64(p + 20, true), dv.getFloat64(p + 28, true)]; }
+function ribosRings(dv, off) {
+  const p = off + 8; if (p + 44 > dv.byteLength || !RIBOS_POLY.has(dv.getInt32(p, true))) return null;
+  const np = dv.getInt32(p + 36, true), n = dv.getInt32(p + 40, true), parts = [];
+  for (let i = 0; i < np; i++) parts.push(dv.getInt32(p + 44 + i * 4, true));
+  const pb = p + 44 + np * 4, rings = [];
+  for (let i = 0; i < np; i++) {
+    const a = parts[i], b = i + 1 < np ? parts[i + 1] : n, r = [];
+    for (let k = a; k < b; k++) r.push([dv.getFloat64(pb + k * 16, true), dv.getFloat64(pb + k * 16 + 8, true)]);
+    if (r.length >= 3) rings.push(r);
+  }
+  return rings;
+}
+function ribosInside(x, y, rings) {
+  let ins = false;
+  for (const r of rings) for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+    const [xi, yi] = r[i], [xj, yj] = r[j];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) ins = !ins;
+  }
+  return ins;
+}
+function ribosSegD2(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy; let t = l2 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0; t = Math.max(0, Math.min(1, t));
+  const qx = ax + t * dx - px, qy = ay + t * dy - py; return qx * qx + qy * qy;
+}
+function ribosPtRingsD(x, y, rings) { let m = Infinity; for (const r of rings) for (let i = 0; i < r.length; i++) { const a = r[i], b = r[(i + 1) % r.length]; const d = ribosSegD2(x, y, a[0], a[1], b[0], b[1]); if (d < m) m = d; } return Math.sqrt(m); }
+function ribosRingsD(A, B, lim) {
+  const l2 = lim * lim;
+  for (const [P, Q] of [[A, B], [B, A]]) for (const r of P) for (const v of r) for (const s of Q) for (let i = 0; i < s.length; i++) { const a = s[i], b = s[(i + 1) % s.length]; if (ribosSegD2(v[0], v[1], a[0], a[1], b[0], b[1]) <= l2) return true; }
+  return false;
+}
+function ribosFind(shp, shx, E, N) {
+  const dv = new DataView(shp), offs = ribosOffsets(shp, shx), s = RIBOS.snap;
+  let best = null;
+  for (let i = 0; i < offs.length; i++) {
+    const bb = ribosRecBBox(dv, offs[i]); if (!bb || E < bb[0] - s || E > bb[2] + s || N < bb[1] - s || N > bb[3] + s) continue;
+    const rg = ribosRings(dv, offs[i]); if (!rg) continue;
+    const inside = ribosInside(E, N, rg), d = inside ? 0 : ribosPtRingsD(E, N, rg);
+    if (!inside && d > s) continue;
+    const rank = inside ? [0, bb[2] - bb[0]] : [1, d];
+    if (!best || rank[0] < best.rank[0] || (rank[0] === best.rank[0] && rank[1] < best.rank[1])) best = { i, rg, inside, d, rank, bb: ribosRingsBBox(rg) };
+  }
+  if (!best) return null;
+  const nbs = [], t = RIBOS.tol;
+  for (let j = 0; j < offs.length && nbs.length < RIBOS.maxNb; j++) {
+    if (j === best.i) continue;
+    const bb = ribosRecBBox(dv, offs[j]); if (!bb || bb[2] < best.bb[0] - t || bb[0] > best.bb[2] + t || bb[3] < best.bb[1] - t || bb[1] > best.bb[3] + t) continue;
+    const rg = ribosRings(dv, offs[j]); if (rg && ribosRingsD(best.rg, rg, t)) nbs.push({ i: j, rg });
+  }
+  return { main: best, nbs };
+}
+function ribosRingsBBox(rg) { let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity; for (const r of rg) for (const [x, y] of r) { if (x < a) a = x; if (x > c) c = x; if (y < b) b = y; if (y > d) d = y; } return [a, b, c, d]; }
+/* kadastro numeriai: tik reikalingi .dbf įrašai (Range) */
+function ribosCad(v) {
+  const s = String(v || "").trim(); if (!s) return "";
+  let m = s.match(/^\s*0*(\d{1,4})\s*[/.,]\s*0*(\d{1,4})\s*[:.,]\s*0*(\d{1,4})\s*$/);
+  if (m) return `${m[1].padStart(4, "0")}/${m[2].padStart(4, "0")}:${m[3].padStart(4, "0")}`;
+  if (/^\d{12}$/.test(s)) return `${s.slice(0, 4)}/${s.slice(4, 8)}:${s.slice(8, 12)}`;
+  return s;
+}
+async function ribosKads(name, idxs) {
+  const out = {};
+  const it = await ribosItem(`${RIBOS.dir}/${name}/sklypai.dbf`); if (!it) return out;
+  let h = await ribosRange(it, 0, 4095), dv = new DataView(h);
+  const hlen = dv.getUint16(8, true), rlen = dv.getUint16(10, true), nrec = dv.getUint32(4, true);
+  if (hlen > 4096) { h = await ribosRange(it, 0, hlen - 1); dv = new DataView(h); }
+  const u8 = new Uint8Array(h), fields = []; let pos = 1;
+  for (let p = 32; p < hlen - 1 && u8[p] !== 0x0D; p += 32) { let nm = ""; for (let k = 0; k < 11 && u8[p + k]; k++) nm += String.fromCharCode(u8[p + k]); const ln = u8[p + 16]; fields.push({ nm: nm.trim().toUpperCase(), off: pos, ln }); pos += ln; }
+  const F = (n) => fields.find((f) => f.nm === n);
+  const kad = F("KADASTRINIS_N") || fields.find((f) => f.nm.includes("KADASTR")), idf = F("ID"), vi = F("VIET_ID"), bl = F("BLOK_NR"), nr = F("NR");
+  const txt = (b, f) => { let s = ""; for (let k = f.off; k < f.off + f.ln && k < b.length; k++) if (b[k]) s += String.fromCharCode(b[k]); return s.trim(); };
+  const one = async (i) => {
+    if (i < 0 || i >= nrec) return;
+    const b = new Uint8Array(await ribosRange(it, hlen + i * rlen, hlen + (i + 1) * rlen - 1)); let v = "";
+    if (kad) v = ribosCad(txt(b, kad));
+    if (!v && vi && bl && nr) { const a = parseInt(txt(b, vi), 10), c = parseInt(txt(b, bl), 10), d = parseInt(txt(b, nr), 10); if (isFinite(a) && isFinite(c) && isFinite(d)) v = `${String(a).padStart(4, "0")}/${String(c).padStart(4, "0")}:${String(d).padStart(4, "0")}`; }
+    if (!v && idf) v = txt(b, idf);
+    out[i] = v;
+  };
+  const q = idxs.slice(); await Promise.all(Array.from({ length: 6 }, async () => { while (q.length) { try { await one(q.shift()); } catch (e) { log("DBF įrašas: " + e.message); } } }));
+  return out;
+}
+/* visa grandinė: padėtis (WGS84) -> paketas, tokio paties formato kaip iš kompiuterio („here“) */
+async function ribosHere(lat, lon) {
+  const [E, N] = wgsToLks94(lat, lon);
+  const idx = await ribosIndex(false), s = RIBOS.snap;
+  const cands = idx.layers.filter((l) => E >= l.bbox[0] - s && E <= l.bbox[2] + s && N >= l.bbox[1] - s && N <= l.bbox[3] + s)
+    .sort((a, b) => (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]) - (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]));
+  if (!cands.length) throw Object.assign(new Error(`„Ribos“ sluoksniuose (${idx.layers.length}) jūsų padėtis nepatenka`), { ribosNone: true });
+  let hit = null, lay = null;
+  for (const c of cands) {
+    setWaitBanner(`Skaitomas sluoksnis „${c.name}“…`);
+    const d = await ribosLayerData(c.name);
+    const f = ribosFind(d.shp, d.shx, E, N);
+    if (f) { hit = f; lay = c; if (f.main.inside) break; }
+  }
+  if (!hit) throw Object.assign(new Error("Sklypo, kuriame stovite, nerasta (artimiausias toliau nei " + RIBOS.snap + " m)"), { ribosNone: true });
+  let kads = {};
+  try { kads = await ribosKads(lay.name, [hit.main.i].concat(hit.nbs.map((x) => x.i))); } catch (e) { log("Ribos DBF: " + e.message); }
+  const wg = (rg) => rg.map((r) => r.map(([x, y]) => { const [la, lo] = lks94ToWgs(x, y); return [Math.round(lo * 1e7) / 1e7, Math.round(la * 1e7) / 1e7]; }));
+  const kadMain = kads[hit.main.i] || "";
+  const pkg = { version: 2, mode: "here", project_no: "VIETA", title: kadMain ? "Mano vieta · " + kadMain : "Mano vieta", req_id: "", created: localISO(), fetched: localISO(), error: "", points: [], notes: [], source: "onedrive",
+    parcels: [{ cad_no: kadMain || "Sklypas", role: "main", rings: wg(hit.main.rg) }] };
+  const seen = new Set([kadMain.replace(/\D/g, "")]);
+  for (const nb of hit.nbs) { const k = kads[nb.i] || "", kd = k.replace(/\D/g, ""); if (kd && seen.has(kd)) continue; if (kd) seen.add(kd); pkg.parcels.push({ cad_no: k || "#" + (nb.i + 1), role: "neighbor", rings: wg(nb.rg) }); }
+  pkg.notes.push(`Šaltinis: OneDrive Ribos/${lay.name}/sklypai.shp (be kompiuterio)`);
+  pkg.notes.push(hit.main.inside ? "Jūsų padėtis yra šio sklypo viduje" : `Jūsų padėtis nepatenka į sklypą – rodomas artimiausias (${Math.round(hit.main.d)} m)`);
+  let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
+  for (const p of pkg.parcels) for (const r of p.rings) for (const [lo, la] of r) { if (lo < a) a = lo; if (lo > c) c = lo; if (la < b) b = la; if (la > d) d = la; }
+  pkg.bbox = [a, b, c, d];
+  return pkg;
+}
+
+/* „Mano vieta“: pirmiausia sklypas ieškomas tiesiai OneDrive „Ribos“ SHP (ribosHere); jei nepavyksta – telefonas nusiunčia padėtį,
+   o kompiuteris „Ribos“ SHP (sklypai.shp) suranda sklypą ir besiribojančius sklypus (tarpas ≤ 0,5 m) arba grąžina priežastį. */
 async function fieldHere() {
   if (!cfgReady() || !Auth.signedIn()) { toast("Pirmiausia prisijunkite (Nustatymai)", true); return; }
   if (!navigator.onLine) { toast("Nėra ryšio", true); return; }
@@ -911,6 +1146,19 @@ async function fieldHere() {
   const reset = () => { b.disabled = false; b.textContent = label; };
   navigator.geolocation.getCurrentPosition(async (p) => {
     const reqId = newId(), prj = "VIETA";
+    try {
+      b.textContent = "Ieškoma sklypo OneDrive…";
+      const pkg = await ribosHere(p.coords.latitude, p.coords.longitude);
+      reset(); setWaitBanner("");
+      await cachePut(fieldKey("VIETA"), pkg);
+      toast("Sklypas rastas OneDrive „Ribos“ (be kompiuterio)");
+      if (!$("v-field").hidden && !fld.mapOpen) openFieldMap(pkg); else renderFieldStart();
+      return;
+    } catch (e) {
+      log("Ribos iš OneDrive: " + e.message);
+      setWaitBanner("");
+      toast("Debesyje sklypo rasti nepavyko (" + e.message + ") – prašoma kompiuterio", true);
+    }
     try {
       await graphPut(fieldRel("_lauko_uzklausa", prj), new Blob([JSON.stringify({ version: 2, mode: "here", req_id: reqId, project_no: prj, lat: p.coords.latitude, lon: p.coords.longitude, acc: Math.round(p.coords.accuracy), device: cfg.device, created: localISO() })], { type: "application/json" }), "application/json");
     } catch (e) { reset(); toast("Nepavyko išsiųsti užklausos: " + e.message, true); return; }
