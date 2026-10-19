@@ -181,6 +181,7 @@
           <button type="button" id="fm-ab-zin" aria-label="Didinti">＋</button>
           <button type="button" id="fm-ab-zout" aria-label="Mažinti">－</button>
           <button type="button" id="fm-ab-zfit" aria-label="Rodyti visą">⤢</button>
+          <button type="button" id="fm-ab-zvx" class="vx" aria-label="Įterpti viršūnę į pasirinktą kraštinę" hidden>●＋</button>
         </div>
       </div>
       <div class="fm-ab-tools">
@@ -194,7 +195,14 @@
         <select id="fm-ab-pivot" aria-label="Sukimo taškas"><option value="a">apie pradžią</option><option value="m">apie vidurį</option><option value="b">apie pabaigą</option></select>
         <button type="button" class="btn small ghost" id="fm-ab-ccw" aria-label="Sukti prieš laikrodžio rodyklę">⟲</button>
         <button type="button" class="btn small ghost" id="fm-ab-cw" aria-label="Sukti pagal laikrodžio rodyklę">⟳</button>
+        <button type="button" class="btn small ghost" id="fm-ab-vx">＋ Viršūnė linijoje</button>
+        <button type="button" class="btn small ghost" id="fm-ab-vxu" hidden>↶ Atšaukti viršūnę</button>
         <button type="button" class="btn small ghost" id="fm-ab-del" hidden>✕ Šalinti objektą</button>
+      </div>
+      <div id="fm-ab-vxp" class="manual" hidden>
+        <div class="small">Palieskite liniją brėžinyje, kur įterpti viršūnę – arba įrašykite atstumą nuo kraštinės pradžios:</div>
+        <div class="row"><input id="fm-ab-vxd" type="text" inputmode="decimal" autocomplete="off" placeholder="Atstumas nuo pradžios, m"><button type="button" class="btn primary" id="fm-ab-vxok">Įdėti</button></div>
+        <div class="row"><button type="button" class="btn small ghost" id="fm-ab-vxd2">← D2</button><button type="button" class="btn small ghost" id="fm-ab-vxmid">Viduryje</button><button type="button" class="btn small ghost" id="fm-ab-vxc">✕ Uždaryti</button></div>
       </div>
       <div id="fm-ab-new" class="manual" hidden>
         <div class="row cols2">
