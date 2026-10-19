@@ -1233,8 +1233,9 @@ function showLpPop(p) {
     return `<tr><td>${esc(k)}</td><td>${val}</td></tr>`;
   }).join("");
   $("field-lp-body").innerHTML = `<div><span class="dot" style="background:${col[0]};opacity:${Math.max(col[1], 0.5)}"></span><b>${esc(at.PPAV || at.ID || "Vietinis punktas")}</b>${col[2] ? " · " + esc(col[2]) : ""}<span class="muted small">${esc(dist)}</span></div>` +
-    (rows ? `<table>${rows}</table>` : '<div class="muted small">Savybių nėra.</div>');
+    (rows ? `<table>${rows}</table>` : '<div class="muted small">Savybių nėra.</div>') + (p.idx != null ? lpEditorHtml(p) : "");
   $("field-lp-pop").hidden = false;
+  lpBindEditor(p);
 }
 function fieldTap(sx, sy) {
   if (!MAP.lp.length || !lpOn()) { hideLpPop(); return; }
@@ -1305,7 +1306,7 @@ function lpBuild(shpBuf, dbfBuf, shxBuf, cpg) {
     }
     if (!en) { bad++; continue; }
     const [lat, lon] = lks94ToWgs(en[0], en[1]);
-    pts.push([Math.round(lat * 1e7) / 1e7, Math.round(lon * 1e7) / 1e7, at]);
+    pts.push([Math.round(lat * 1e7) / 1e7, Math.round(lon * 1e7) / 1e7, at, i]);
   }
   return { pts, stats: { total: rows.length, geo: g, attr: a, bad } };
 }
@@ -1322,7 +1323,7 @@ async function lpDownload(itemUrl) {
 async function lpFindFiles() {
   /* 1) numatytas aplankas, 2) paieška visame OneDrive */
   let items = null;
-  let r = await graphFetch(`${GRAPH}/me/drive/root:/${encPath(LPD.dir)}:/children?$select=id,name,size,eTag&$top=200`, { method: "GET" });
+  let r = await graphFetch(`${GRAPH}/me/drive/root:/${encPath(LPD.dir)}:/children?$select=id,name,size,eTag,parentReference&$top=200`, { method: "GET" });
   if (r.ok) items = (await r.json()).value || [];
   const pickSet = (list) => {
     const lc = (list || []).map((x) => ({ x, n: String(x.name || "").toLowerCase() }));
@@ -1338,7 +1339,7 @@ async function lpFindFiles() {
       const found = ((await r.json()).value || []).filter((x) => /vietiniai_p.*\.shp$/i.test(x.name || ""));
       if (found.length) {
         const pid = found[0].parentReference && found[0].parentReference.id;
-        if (pid) { const c = await graphFetch(`${GRAPH}/me/drive/items/${pid}/children?$select=id,name,size,eTag&$top=200`, { method: "GET" }); if (c.ok) set = pickSet((await c.json()).value || []); }
+        if (pid) { const c = await graphFetch(`${GRAPH}/me/drive/items/${pid}/children?$select=id,name,size,eTag,parentReference&$top=200`, { method: "GET" }); if (c.ok) set = pickSet((await c.json()).value || []); }
       }
     }
   }
@@ -1353,9 +1354,11 @@ async function lpFetchAll(silent) {
   const get = async (x) => x ? lpDownload(`${GRAPH}/me/drive/items/${x.id}`) : null;
   const dbf = await get(set.dbf), shp = await get(set.shp), shx = await get(set.shx), cpg = await get(set.cpg);
   if (!dbf || !shp) throw new Error("Nepavyko atsisiųsti SHP / DBF");
-  const res = lpBuild(shp.buf, dbf.buf, shx ? shx.buf : null, cpg ? new TextDecoder().decode(cpg.buf) : "");
+  const cpgText = cpg ? new TextDecoder().decode(cpg.buf) : "";
+  const res = lpBuild(shp.buf, dbf.buf, shx ? shx.buf : null, cpgText);
   if (!res.pts.length) throw new Error(`SHP neturi tinkamų LKS94 koordinačių (įrašų ${res.stats.total})`);
-  const meta = { ts: Date.now(), name: set.shp.name, etag: (shp.etag || "") + "|" + (dbf.etag || ""), stats: res.stats };
+  const meta = { v: 2, ts: Date.now(), name: set.shp.name, etag: (shp.etag || "") + "|" + (dbf.etag || ""), stats: res.stats,
+    dbf: { id: set.dbf.id, name: set.dbf.name, parent: (set.dbf.parentReference || {}).id || "", cpg: cpgText } };
   await cachePut("lpdata", { meta, pts: res.pts });
   LPD.pts = res.pts; LPD.meta = meta;
   log(`Vietiniai punktai: ${res.pts.length} (įrašų ${res.stats.total}, geometrija ${res.stats.geo}, atributai ${res.stats.attr}, be koordinačių ${res.stats.bad})`);
@@ -1368,7 +1371,7 @@ function lpLoad(force) {
   LPD.promise = (async () => {
     if (!force) {
       const c = await cacheGet("lpdata");
-      if (c && c.pts && c.pts.length) {
+      if (c && c.pts && c.pts.length && c.meta && c.meta.v === 2) {
         LPD.pts = c.pts; LPD.meta = c.meta || {};
         if (navigator.onLine && cfgReady() && Auth.signedIn() && Date.now() - ((c.meta || {}).ts || 0) > LPD.maxAgeDays * 86400000) lpFetchAll(true).then(() => toast("Vietinių punktų duomenys atnaujinti")).catch((e) => log("Vietinių punktų atnaujinimas: " + e.message));
         return LPD.pts;
@@ -1393,7 +1396,7 @@ async function lpAttach(pkg) {
     let rad = 450;
     if (bb) rad += Math.max((bb[2] - bb[0]) * MAP.kx, (bb[3] - bb[1]) * MAP.ky) / 2;
     const near = lpNear(lat, lon, rad, 1500);
-    MAP.lp = near.map(([la, lo, at]) => ({ xy: toM(lo, la), at })); MAP.lpSel = null;
+    MAP.lp = near.map(([la, lo, at, idx]) => ({ xy: toM(lo, la), at, idx })); MAP.lpSel = null;
     $("field-lp").hidden = !MAP.lp.length; updateLegend(); scheduleDraw();
     if (!MAP.lp.length) toast("Šalia vietinių punktų nėra (≤ " + Math.round(rad) + " m)");
   } catch (e) { log("Vietiniai punktai: " + e.message); if (fld.mapOpen) toast("Vietinių punktų nėra: " + e.message, true); }
@@ -1409,6 +1412,153 @@ function lpNearMe() {
     openFieldMap({ project_no: "VIETINIAI", title: "Vietiniai punktai", fetched: localISO(), points: [], parcels: [], notes: [], bbox: [lon - dx, lat - dy, lon + dx, lat + dy] }, { test: true, lpOnly: true });
   }, (e) => { reset(); toast("Padėtis negauta: " + e.message + ". Leiskite naršyklei naudoti vietą.", true); },
   { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+}
+/* ---- punkto redagavimas telefone: RASTVIETOV reikšmė (rašoma į DBF OneDrive) ir nuotraukos (OneDrive aplankas „Qgis punktai“, vardas pagal PPAV) ---- */
+const LPP = { dir: "Qgis punktai", list: null, at: 0 };
+const lpFileKey = (s) => String(s == null ? "" : s).replace(/[\\/:*?"<>|]/g, "_").trim();
+async function lpPhotoIndex(force) {
+  if (!force && LPP.list && Date.now() - LPP.at < 300000) return LPP.list;
+  let url = `${GRAPH}/me/drive/root:/${encPath(LPP.dir)}:/children?$select=id,name,webUrl,file&$top=999`; const all = [];
+  while (url) {
+    const r = await graphFetch(url, { method: "GET" });
+    if (r.status === 404) break;
+    if (!r.ok) throw httpErr(r, await r.text());
+    const j = await r.json(); all.push(...(j.value || []).filter((x) => x.file)); url = j["@odata.nextLink"] || null;
+  }
+  LPP.list = all; LPP.at = Date.now(); return all;
+}
+function lpPhotosOf(list, ppav) {
+  const k = lpFileKey(ppav).toLowerCase(); if (!k) return [];
+  return list.filter((x) => { const stem = x.name.replace(/\.[^.]+$/, "").toLowerCase(); return stem === k || (stem.startsWith(k) && /^(_\d+| \(\d+\))$/.test(stem.slice(k.length))); });
+}
+async function lpAddPhoto(p, file) {
+  const ppav = lpFileKey(p.at.PPAV || p.at.ID);
+  if (!ppav) throw new Error("Punktas neturi PPAV – vardo nuotraukai nėra");
+  if (!navigator.onLine) throw new Error("Nėra ryšio");
+  const taken = new Set((await lpPhotoIndex(true)).map((x) => x.name.toLowerCase()));
+  const blob = await prepareImage(file, 2000, 0.85);
+  const ext = blob.type === "image/jpeg" ? ".jpg" : ((String(file.name || "").match(/\.[A-Za-z0-9]+$/) || [".jpg"])[0].toLowerCase());
+  let name = ppav + ext, n = 1;
+  while (taken.has(name.toLowerCase())) { n++; name = `${ppav}_${n}${ext}`; }
+  await graphPut(`${LPP.dir}/${name}`, blob, blob.type || "image/jpeg");
+  LPP.at = 0;
+  let link = "";
+  try { const it = (await lpPhotoIndex(true)).find((x) => x.name === name); link = it && it.webUrl ? it.webUrl : ""; } catch (_) { /* */ }
+  return { name, link };
+}
+/* Nuotraukos nuoroda → atributas photo (jei tuščias; jei jau užpildytas – klausiama). Grąžina tekstą apie rezultatą. */
+async function lpLinkPhoto(p, r) {
+  if (!r.link) return "nuorodos į photo neįrašyta (nerasta OneDrive nuoroda)";
+  if (p.at.photo && p.at.photo !== r.link && !confirm(`Laukas photo jau užpildytas:\n${p.at.photo}\n\nPakeisti nauja nuoroda?`)) return "photo paliktas nepakeistas";
+  let val = r.link;
+  try { await lpSaveAttr(p, "photo", val); return "nuoroda įrašyta į photo"; }
+  catch (e) {
+    if (/Per ilga/.test(e.message)) { val = `${LPP.dir}/${r.name}`; try { await lpSaveAttr(p, "photo", val); return "pilna nuoroda netilpo – į photo įrašytas kelias " + val; } catch (e2) { return "photo neįrašytas: " + e2.message; } }
+    return "photo neįrašytas: " + e.message;
+  }
+}
+const LP_EDITABLE = ["rastvietov", "photo"];   // koordinatės ir kiti laukai telefone NIEKADA nekeičiami – tik peržiūra
+function lpDbfSet(buf, cpg, idx, ident, field, value) {
+  if (!LP_EDITABLE.includes(String(field).toLowerCase())) throw new Error("Laukas " + field + " telefone nekeičiamas");
+  const u8 = new Uint8Array(buf), dv = new DataView(buf), nrec = dv.getUint32(4, true), hlen = dv.getUint16(8, true), rlen = dv.getUint16(10, true);
+  let f = null, off = 1;
+  for (let p = 32; p < hlen - 1 && u8[p] !== 0x0D; p += 32) {
+    let nm = ""; for (let k = 0; k < 11 && u8[p + k]; k++) nm += String.fromCharCode(u8[p + k]);
+    const len = u8[p + 16];
+    if (nm.trim().toLowerCase() === field.toLowerCase()) f = { type: String.fromCharCode(u8[p + 11]), len, dec: u8[p + 17], off };
+    off += len;
+  }
+  if (!f) throw new Error("DBF nėra lauko " + field);
+  if (f.type !== "C" && f.type !== "N") throw new Error(`Laukas ${field} turi nepalaikomą tipą (${f.type})`);
+  if (idx < 0 || idx >= nrec) throw new Error("Įrašas nerastas – atnaujinkite punktus (Nustatymai)");
+  const rec = hlen + idx * rlen;
+  if (rec + rlen > buf.byteLength || u8[rec] === 0x2A) throw new Error("Įrašas pašalintas arba pasikeitė – atnaujinkite punktus (Nustatymai)");
+  const cur = lpParseDbf(buf, cpg)[idx] || {};
+  for (const k of ["PPAV", "ID"]) if (String(cur[k] || "") !== String(ident[k] || "")) throw new Error("SHP pasikeitė kitur (neatitinka punktas) – atnaujinkite punktus (Nustatymai)");
+  if (f.type === "N") {      /* skaitinis laukas (pvz. RASTVIETOV): sveikas skaičius, dešinėje lygiuotas, tuščias = tarpai */
+    const v = String(value).trim();
+    if (v !== "" && !(f.dec ? /^-?\d+([.,]\d+)?$/ : /^-?\d+$/).test(v)) throw new Error(`Laukas ${field} turi būti ${f.dec ? "skaičius" : "sveikas skaičius"}`);
+    const s = v === "" ? "" : (f.dec ? Number(v.replace(",", ".")).toFixed(f.dec) : String(parseInt(v, 10)));
+    if (s.length > f.len) throw new Error(`Per didelė reikšmė: laukas ${field} talpina ${f.len} simbolių`);
+    const st = rec + f.off, pad = s.padStart(f.len, " ");
+    for (let i = 0; i < f.len; i++) u8[st + i] = pad.charCodeAt(i);
+    return;
+  }
+  let utf8 = /utf/i.test(cpg || "");
+  if (!utf8 && !/125\d/.test(cpg || "")) {
+    try { let hi = false; for (let i = hlen; i < u8.length; i++) if (u8[i] > 127) { hi = true; break; } if (hi) { new TextDecoder("utf-8", { fatal: true }).decode(u8.subarray(hlen)); utf8 = true; } } catch (_) { utf8 = false; }
+  }
+  const bytes = []; let cut = false;
+  if (utf8) { const te = new TextEncoder(); for (const ch of value) { const b = te.encode(ch); if (bytes.length + b.length > f.len) { cut = true; break; } bytes.push(...b); } }
+  else {
+    const dec = new TextDecoder(/1250/.test(cpg || "") ? "windows-1250" : /1252/.test(cpg || "") ? "windows-1252" : "windows-1257"), map = new Map();
+    for (let b = 128; b < 256; b++) { const c = dec.decode(new Uint8Array([b])); if (!map.has(c)) map.set(c, b); }
+    for (const ch of value) {
+      const b = ch.charCodeAt(0) < 128 ? ch.charCodeAt(0) : map.get(ch);
+      if (b == null) throw new Error(`Simbolio „${ch}“ negalima įrašyti į DBF koduotę`);
+      if (bytes.length + 1 > f.len) { cut = true; break; } bytes.push(b);
+    }
+  }
+  if (cut) throw new Error(`Per ilga reikšmė: laukas ${field} talpina ${f.len} baitų`);
+  const start = rec + f.off;
+  for (let i = 0; i < f.len; i++) u8[start + i] = i < bytes.length ? bytes[i] : 0x20;
+}
+async function lpSaveAttr(p, field, value) {
+  if (!navigator.onLine) throw new Error("Nėra ryšio");
+  const m = LPD.meta && LPD.meta.dbf;
+  if (!m || !m.id || !m.parent) throw new Error("Trūksta DBF nuorodos – atnaujinkite punktus (Nustatymai)");
+  const itemUrl = `${GRAPH}/me/drive/items/${m.id}`;
+  const d = await lpDownload(itemUrl);
+  if (!d) throw new Error("DBF OneDrive nerastas");
+  const orig = d.buf.slice(0);
+  lpDbfSet(d.buf, m.cpg, p.idx, p.at, field, value);              // klaidos – dar prieš bet kokį įrašymą
+  const stamp = localISO().slice(0, 10).replace(/-/g, "");
+  const b = await graphFetch(`${GRAPH}/me/drive/items/${m.parent}:/${encodeURIComponent(m.name)}.bak${stamp}:/content?@microsoft.graph.conflictBehavior=fail`,
+    { method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: new Blob([orig]) });
+  if (!b.ok && b.status !== 409) throw new Error("Nepavyko sukurti atsarginės DBF kopijos (HTTP " + b.status + ") – pakeitimas neįrašytas");
+  const r = await graphFetch(`${itemUrl}/content`, { method: "PUT", headers: { "Content-Type": "application/octet-stream", "If-Match": d.etag }, body: new Blob([d.buf]) });
+  if (r.status === 412) throw new Error("SHP pakeistas kitur – atnaujinkite punktus ir bandykite dar kartą");
+  if (!r.ok) throw httpErr(r, await r.text());
+  if (value) p.at[field] = value; else delete p.at[field];
+  log(`${field} pakeista: ${p.at.PPAV || p.at.ID} → ${value || "(tuščia)"}`);
+  await cachePut("lpdata", { meta: LPD.meta, pts: LPD.pts });
+}
+function lpEditorHtml(p) {
+  const vals = [...new Set((LPD.pts || []).map((q) => q[2].RASTVIETOV).filter(Boolean))].sort((a, b) => Number(a) - Number(b) || String(a).localeCompare(String(b))).slice(0, 80);
+  return `<div class="lp-edit"><label for="lp-rv" class="small muted">RASTVIETOV</label><div class="row"><input id="lp-rv" list="lp-rv-list" inputmode="numeric" maxlength="12" value="${esc(p.at.RASTVIETOV || "")}">` +
+    `<datalist id="lp-rv-list">${vals.map((v) => `<option value="${esc(v)}">`).join("")}</datalist><button type="button" class="btn small primary" id="lp-rv-save">Saugoti</button></div></div>` +
+    `<div class="lp-ph"><div id="lp-ph-list" class="muted small">Nuotraukos: tikrinama…</div><button type="button" class="btn small" id="lp-ph-add">📷 Pridėti nuotrauką</button><input type="file" id="lp-ph-file" accept="image/*" hidden></div>`;
+}
+async function lpShowPhotos(p) {
+  const el = $("lp-ph-list"); if (!el) return;
+  if (!navigator.onLine || !cfgReady() || !Auth.signedIn()) { el.textContent = "Nuotraukų sąrašui reikia ryšio ir prisijungimo"; return; }
+  try {
+    const list = lpPhotosOf(await lpPhotoIndex(false), p.at.PPAV || p.at.ID), cur = $("lp-ph-list");
+    if (MAP.lpSel !== p || !cur) return;
+    cur.innerHTML = list.length ? "Nuotraukos: " + list.map((x) => `<a href="${esc(x.webUrl)}" target="_blank" rel="noopener">${esc(x.name)}</a>`).join(" · ") : "Nuotraukų nėra";
+  } catch (e) { el.textContent = "Nuotraukų sąrašo gauti nepavyko: " + e.message; }
+}
+function lpBindEditor(p) {
+  if (p.idx == null || !$("lp-rv-save")) return;
+  $("lp-rv-save").onclick = async () => {
+    const btn = $("lp-rv-save"), v = $("lp-rv").value.trim();
+    if (v === (p.at.RASTVIETOV || "")) { toast("Reikšmė nepakeista"); return; }
+    if (v !== "" && !/^-?\d+$/.test(v)) { toast("RASTVIETOV turi būti sveikas skaičius", true); return; }
+    if (!confirm(`Pakeisti ${p.at.PPAV || p.at.ID} RASTVIETOV į „${v || "(tuščia)"}“ ir įrašyti į SHP (OneDrive)?`)) return;
+    btn.disabled = true; btn.textContent = "Saugoma…";
+    try { await lpSaveAttr(p, "RASTVIETOV", v); toast("RASTVIETOV išsaugota"); if (MAP.lpSel === p) showLpPop(p); }
+    catch (e) { toast(e.message, true); log("RASTVIETOV: " + e.message); btn.disabled = false; btn.textContent = "Saugoti"; }
+  };
+  $("lp-ph-add").onclick = () => $("lp-ph-file").click();
+  $("lp-ph-file").onchange = async (ev) => {
+    const f = ev.target.files && ev.target.files[0]; ev.target.value = ""; if (!f) return;
+    const btn = $("lp-ph-add"); btn.disabled = true; btn.textContent = "Keliama…";
+    try { const r = await lpAddPhoto(p, f); btn.textContent = "Rašoma nuoroda…"; const res = await lpLinkPhoto(p, r); toast(`Nuotrauka ${r.name} įkelta; ${res}`); if (MAP.lpSel === p) showLpPop(p); }
+    catch (e) { toast(e.message, true); log("Nuotrauka: " + e.message); }
+    if ($("lp-ph-add")) { $("lp-ph-add").disabled = false; $("lp-ph-add").textContent = "📷 Pridėti nuotrauką"; }
+    lpShowPhotos(p);
+  };
+  lpShowPhotos(p);
 }
 async function lpReloadNow() {
   const info = $("set-lpinfo"); info.textContent = "Kraunama…";
