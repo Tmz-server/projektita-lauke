@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.10.0";
+const VERSION = "1.11.0";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -417,7 +417,7 @@ async function refreshPoints(prj, silent) {
 async function refreshBuildings(prj, silent) {
   try {
     const j = await graphGetJson(`${inboxPath()}/_projektai/${slugPy(prj, 30)}_pastatai.json`);
-    if (!j) { if (!silent) toast("Šio projekto pastatų (sluoksniai 2601–2699) sąrašo nėra – kompiuteryje atidarykite KADMAT taškus.", true); return null; }
+    if (!j) { if (!silent) toast("Šio projekto pastatų (sluoksniai 2601–2799) sąrašo nėra – kompiuteryje atidarykite KADMAT taškus.", true); return null; }
     await cachePut("buildings:" + prj, j); log(`Pastatai ${prj}: ${(j.buildings || []).length}`);
     return j;
   } catch (e) { log("Pastatai: " + e.message); if (!silent && !e.authRequired) toast("Nepavyko gauti pastatų: " + e.message, true); return null; }
@@ -2460,7 +2460,7 @@ async function fmSetProject(prj) {
 }
 
 /* ------------------------------------------------------------------ Abriso juodraštis (pastatų kontūrai 2601/2602 iš DWG) */
-const fmab = { blds: [], sides: [], sel: -1, tol: 0.10, move: false, draw: null, drag: null, tf: null, draft: null, full: false, view: { k: 1, cx: null, cy: null }, base: null, ptrs: new Map(), gest: null, noClick: false };
+const fmab = { bg: null, blds: [], sides: [], sel: -1, tol: 0.10, move: false, draw: null, drag: null, tf: null, draft: null, full: false, view: { k: 1, cx: null, cy: null }, base: null, ptrs: new Map(), gest: null, noClick: false };
 /* Mastelis ir stumdymas (viewBox): ＋/－ mygtukai, dviejų pirštų suspaudimas, vieno piršto stumdymas, pelės ratukas */
 function fmAbGeom() { const r = $("fm-ab-svg").getBoundingClientRect(), b = fmab.base; return r.width && b ? { r, b } : null; }
 function fmAbScale(g, k) { return Math.min(g.r.width / (g.b.vbw / k), g.r.height / (g.b.vbh / k)); }
@@ -2555,12 +2555,30 @@ function fmAbApplyDraft() {
     if (b && b.pts.length === (e.pts || []).length) b.pts = cp(e.pts);
   });
 }
+/* Visas DWG kaip pilkas fonas (tik rodomas): {origin,unit,paths:[{c,p:[x,y,…]}]} -> viena SVG kelio eilutė (koordinatės cm nuo origin) */
+function fmAbBgDecode(bg) {
+  try {
+    if (!bg || !Array.isArray(bg.paths) || !bg.paths.length || !Array.isArray(bg.origin)) return null;
+    const u = Number(bg.unit) || 0.01; let d = "", a = Infinity, b = Infinity, c = -Infinity, e = -Infinity;
+    for (const q of bg.paths) {
+      const p = q.p || []; if (p.length < 4) continue;
+      for (let i = 0; i < p.length; i += 2) {
+        const x = p[i] * u, y = -p[i + 1] * u; d += (i ? "L" : "M") + x.toFixed(2) + " " + y.toFixed(2);
+        const wx = bg.origin[0] + x, wy = bg.origin[1] - y;
+        if (wx < a) a = wx; if (wx > c) c = wx; if (wy < b) b = wy; if (wy > e) e = wy;
+      }
+      if (q.c) d += "Z";
+    }
+    return d ? { d, ox: bg.origin[0], oy: bg.origin[1], x0: a, x1: c, y0: b, y1: e } : null;
+  } catch (_) { return null; }
+}
 async function fmAbLoad(prj) {
-  fmab.sel = -1; fmab.blds = []; fmab.draw = null; fmab.drag = null; fmab.view = { k: 1, cx: null, cy: null };
+  fmab.sel = -1; fmab.blds = []; fmab.bg = null; fmab.draw = null; fmab.drag = null; fmab.view = { k: 1, cx: null, cy: null };
   if (prj) {
     try {
       const d = await cacheGet("buildings:" + prj);
       fmab.blds = ((d && d.buildings) || []).map((b) => ({ id: b.id, code: b.code || "", kind: "", extra: false, closed: !!b.closed, pts: cp(b.pts), orig: cp(b.pts) }));
+      fmab.bg = fmAbBgDecode(d && d.background);
     } catch (_) { /* */ }
   }
   fmAbApplyDraft(); fmAbBuild(); fmAbRender();
@@ -2643,19 +2661,29 @@ function fmAbRender() {
   const drawPts = fmab.draw ? fmab.draw.pts : [];
   if (!fmab.blds.length && !drawPts.length) {
     svg.setAttribute("hidden", "");
-    info.textContent = fm.project ? "Šiam projektui pastatų (sluoksniai 2601–2699) nėra – kompiuteryje KADMAT taškų lange spauskite „Abriso pastatai…“. Objektus galima pridėti ranka: ＋ Objektas." : "";
+    info.textContent = fm.project ? "Šiam projektui pastatų (sluoksniai 2601–2799) nėra – kompiuteryje KADMAT taškų lange spauskite „Abriso pastatai…“. Objektus galima pridėti ranka: ＋ Objektas." : "";
     return;
   }
   svg.removeAttribute("hidden");
   const xs = [], ys = [];
   fmab.blds.forEach((b) => b.pts.forEach((p) => { xs.push(p[0]); ys.push(p[1]); }));
   drawPts.forEach((p) => { xs.push(p[0]); ys.push(p[1]); });
-  const minx = Math.min(...xs), maxx = Math.max(...xs), miny = Math.min(...ys), maxy = Math.max(...ys);
+  const bgx = fmab.bg ? [fmab.bg.x0, fmab.bg.x1] : [], bgy = fmab.bg ? [fmab.bg.y0, fmab.bg.y1] : [];
+  const minx = Math.min(...xs, ...bgx), maxx = Math.max(...xs, ...bgx), miny = Math.min(...ys, ...bgy), maxy = Math.max(...ys, ...bgy);
   const w = Math.max(maxx - minx, 1), h = Math.max(maxy - miny, 1), pad = Math.max(w, h) * 0.16;
-  const vbw = w + 2 * pad, vbh = h + 2 * pad, fz = Math.pow(fmab.view.k, 0.75), fs = Math.max(vbw, vbh) * 0.036 / fz, sw = fs * 0.16;
+  const vbw = w + 2 * pad, vbh = h + 2 * pad;
   fmab.tf = { minx, maxy };
   fmab.base = { bx: -pad, by: -pad, vbw, vbh };
-  if (fmab.view.cx == null) fmAbSetView(fmab.view.k, -pad + vbw / 2, -pad + vbh / 2); else fmAbSetView(fmab.view.k, fmab.view.cx, fmab.view.cy);
+  if (fmab.view.cx == null) {
+    let k0 = 1, cx0 = -pad + vbw / 2, cy0 = -pad + vbh / 2;
+    if (fmab.bg && xs.length) {   // su DWG fonu pradinis vaizdas – pastatai (fonas matomas tolinant ir stumdant)
+      const a0 = Math.min(...xs), a1 = Math.max(...xs), b0 = Math.min(...ys), b1 = Math.max(...ys), bw = Math.max(a1 - a0, 1), bh = Math.max(b1 - b0, 1), bp = Math.max(bw, bh) * 0.16;
+      k0 = Math.max(1, Math.min(40, Math.min(vbw / (bw + 2 * bp), vbh / (bh + 2 * bp))));
+      cx0 = (a0 + a1) / 2 - minx; cy0 = maxy - (b0 + b1) / 2;
+    }
+    fmAbSetView(k0, cx0, cy0);
+  } else fmAbSetView(fmab.view.k, fmab.view.cx, fmab.view.cy);
+  const fz = Math.pow(fmab.view.k, 0.75), fs = Math.max(vbw, vbh) * 0.036 / fz, sw = fs * 0.16;
   svg.setAttribute("viewBox", fmAbVBox());
   const X = (x) => (x - minx), Y = (y) => (maxy - y);
   const NS = "http://www.w3.org/2000/svg";
@@ -2669,6 +2697,12 @@ function fmAbRender() {
     const p = fmAbPtFromEvent(e); if (!p) return;
     fmab.draw.pts.push(p); fmAbRender();
   });
+  if (fmab.bg) {   // visas DWG – pilkas fonas, neliečiamas
+    const g = mk("g", { transform: `translate(${fmab.bg.ox - minx} ${maxy - fmab.bg.oy})`, "pointer-events": "none" });
+    const pa = document.createElementNS(NS, "path");
+    pa.setAttribute("d", fmab.bg.d); pa.setAttribute("fill", "none"); pa.setAttribute("stroke", cMut); pa.setAttribute("stroke-width", "1");
+    pa.setAttribute("vector-effect", "non-scaling-stroke"); pa.setAttribute("opacity", "0.5"); g.appendChild(pa);
+  }
   const cen = fmab.blds.map((b) => { const p = b.pts; return [p.reduce((a, q) => a + q[0], 0) / p.length, p.reduce((a, q) => a + q[1], 0) / p.length]; });
   fmab.blds.forEach((b, bi) => {
     if (b.orig && fmab.blds[bi].pts.some((p, k) => Math.abs(p[0] - b.orig[k][0]) > 0.005 || Math.abs(p[1] - b.orig[k][1]) > 0.005))
@@ -2707,7 +2741,7 @@ function fmAbRender() {
     drawPts.forEach((p) => mk("circle", { cx: X(p[0]), cy: Y(p[1]), r: sw * 1.6, fill: cAcc }));
   }
   info.textContent = `Objektų: ${fmab.blds.length}, kraštinių: ${fmab.sides.length}, išmatuota: ${done}` + (bad ? `, nukrypsta >${Math.round(fmab.tol * 100)} cm: ${bad}` : "") +
-    (fmab.full && fmab.view.k === 1 && !sel ? " · Mastelis: dviem pirštais arba ＋/－ dešinėje" : "") + (fmab.draw ? " · Braižymas: palieskite brėžinį, kad pridėtumėte kampus" :
+    (fmab.bg && !sel ? " · pilkas fonas – visas DWG (matuojami 26XX / 27XX)" : "") + (fmab.full && fmab.view.k === 1 && !sel ? " · Mastelis: dviem pirštais arba ＋/－ dešinėje" : "") + (fmab.draw ? " · Braižymas: palieskite brėžinį, kad pridėtumėte kampus" :
       sel ? ` · ${sel.from} → ${sel.to}: dabar ${fmFmt(sel.len)}${sel.plan != null ? `, DWG ${fmFmt(sel.plan)}` : ""} – matuokite D2 arba įveskite ilgį` : " · Palieskite kraštinę ir matuokite");
 }
 function fmAbBar(sel) {
