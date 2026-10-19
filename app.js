@@ -849,7 +849,7 @@ function bindSettings() {
 const FIELD_KEEP_DAYS = 3;
 const FIELD_WAIT_MAX_MS = 10 * 60 * 1000;
 const fld = { test: false, prj: "", mapOpen: false, waiting: false, cancel: false, watch: null, pos: null, lastAt: 0, wake: null, ro: null, raf: 0 };
-const MAP = { lat0: 0, lon0: 0, kx: 1, ky: 111195, cx: 0, cy: 0, scale: 1, polys: [], pts: [], marks: [], W: 0, H: 0, dpr: 1, follow: false, ptrs: new Map(), pinch: 0, ctx: null, pkg: null };
+const MAP = { lat0: 0, lon0: 0, kx: 1, ky: 111195, cx: 0, cy: 0, scale: 1, polys: [], pts: [], lp: [], lpSel: null, tap: null, marks: [], W: 0, H: 0, dpr: 1, follow: false, ptrs: new Map(), pinch: 0, ctx: null, pkg: null };
 const fieldKey = (prj) => "field:" + prj;
 const fieldRel = (sub, prj) => `${inboxPath()}/${sub}/${slugPy(prj, 30)}.json`;
 
@@ -934,7 +934,7 @@ async function renderFieldStart() {
   $("field-saved-h").hidden = !all.length; $("field-clear").hidden = !all.length;
   for (const p of all) {
     const li = document.createElement("li");
-    li.innerHTML = `<div class="t">${esc(p.title || p.project_no)}</div><div class="s">gautas ${esc(String(p.fetched || "").slice(5, 16).replace("T", " "))} · sklypų ${(p.parcels || []).length} · taškų ${(p.points || []).length}</div>` +
+    li.innerHTML = `<div class="t">${esc(p.title || p.project_no)}</div><div class="s">gautas ${esc(String(p.fetched || "").slice(5, 16).replace("T", " "))} · sklypų ${(p.parcels || []).length} · taškų ${(p.points || []).length}${(p.local_points || []).length ? " · vietinių " + p.local_points.length : ""}</div>` +
       `<div class="acts"><button type="button" class="btn small primary">Atidaryti</button><button type="button" class="btn small ghost">Ištrinti</button></div>`;
     const b = li.querySelectorAll("button");
     b[0].onclick = () => openFieldMap(p);
@@ -1001,7 +1001,7 @@ async function resumeFieldWait() {
 function toM(lon, lat) { return [(lon - MAP.lon0) * MAP.kx, (lat - MAP.lat0) * MAP.ky]; }
 function openFieldMap(pkg, opts = {}) {
   MAP.pkg = pkg; fld.mapOpen = true; fld.prj = pkg.project_no; fld.test = !!opts.test; MAP.marks = [];
-  $("field-done").textContent = fld.test ? "Uždaryti testą" : "Baigti ir ištrinti";
+  $("field-done").textContent = fld.test ? (opts.lpOnly ? "Uždaryti" : "Uždaryti testą") : "Baigti ir ištrinti";
   const bb = pkg.bbox || (() => { const p = (pkg.parcels[0] || {}).rings; return p ? [p[0][0][0], p[0][0][1], p[0][0][0], p[0][0][1]] : [25.28, 54.69, 25.28, 54.69]; })();
   MAP.lon0 = (bb[0] + bb[2]) / 2; MAP.lat0 = (bb[1] + bb[3]) / 2;
   MAP.kx = MAP.ky * Math.cos(MAP.lat0 * Math.PI / 180);
@@ -1011,13 +1011,16 @@ function openFieldMap(pkg, opts = {}) {
     return { cad: p.cad_no, role: p.role, rings, c: [sx / n, sy / n] };
   });
   MAP.pts = (pkg.points || []).map((p) => ({ label: p.label, xy: toM(p.lon, p.lat) }));
+  MAP.lp = (pkg.local_points || []).map((p) => ({ xy: toM(p.lon, p.lat), at: p.at || {} })); MAP.lpSel = null; hideLpPop();
+  $("field-lp").hidden = !MAP.lp.length;
   MAP.terr = pkg.terrain && Array.isArray(pkg.terrain.pts) && pkg.terrain.pts.length >= 3 ? pkg.terrain.pts.map(([lo, la, z]) => { const [x, y] = toM(lo, la); return [x, y, z]; }) : null;
   MAP.terrMemo = new Map();
   $("field-start").hidden = true; $("field-map-wrap").hidden = false;
   $("title").textContent = pkg.title || pkg.project_no;
   const notes = (pkg.notes || []).join(" · ");
-  $("field-legend").textContent = (notes ? notes + " · " : "") + "Mėlyna – projekto sklypas, pilka – kaimynai, raudona – objekto taškas, oranžinis – jūsų žymos, mėlynas apskritimas – jūsų padėtis.";
-  initCanvas(); fitMap(); startFieldWatch(); drawMap(); updateFieldInfo();
+  MAP.legendBase = (notes ? notes + " · " : "") + "Mėlyna – projekto sklypas, pilka – kaimynai, raudona – objekto taškas, oranžinis – jūsų žymos, mėlynas apskritimas – jūsų padėtis.";
+  updateLegend();
+  initCanvas(); fitMap(); startFieldWatch(); drawMap(); updateFieldInfo(); lpAttach(pkg);
 }
 function closeFieldMap() {
   fld.mapOpen = false; stopFieldWatch();
@@ -1030,9 +1033,10 @@ function initCanvas() {
   if (!cv._bound) {
     cv._bound = true;
     cv.style.touchAction = "none";
-    cv.addEventListener("pointerdown", (e) => { cv.setPointerCapture(e.pointerId); MAP.ptrs.set(e.pointerId, [e.clientX, e.clientY]); MAP.pinch = 0; });
+    cv.addEventListener("pointerdown", (e) => { cv.setPointerCapture(e.pointerId); MAP.ptrs.set(e.pointerId, [e.clientX, e.clientY]); MAP.pinch = 0; MAP.tap = MAP.ptrs.size === 1 ? { x: e.clientX, y: e.clientY, t: Date.now(), moved: false } : null; });
     cv.addEventListener("pointermove", (e) => {
       if (!MAP.ptrs.has(e.pointerId)) return;
+      if (MAP.tap && Math.hypot(e.clientX - MAP.tap.x, e.clientY - MAP.tap.y) > 9) MAP.tap.moved = true;
       const prev = MAP.ptrs.get(e.pointerId); MAP.ptrs.set(e.pointerId, [e.clientX, e.clientY]);
       if (MAP.ptrs.size === 1) { MAP.cx -= (e.clientX - prev[0]) / MAP.scale; MAP.cy += (e.clientY - prev[1]) / MAP.scale; MAP.follow = false; scheduleDraw(); }
       else if (MAP.ptrs.size === 2) {
@@ -1041,13 +1045,19 @@ function initCanvas() {
         MAP.pinch = d; MAP.follow = false;
       }
     });
-    const up = (e) => { MAP.ptrs.delete(e.pointerId); MAP.pinch = 0; };
+    const up = (e) => {
+      const tap = MAP.tap; MAP.tap = null;
+      if (tap && !tap.moved && e.type === "pointerup" && MAP.ptrs.size === 1 && Date.now() - tap.t < 700) { const r = cv.getBoundingClientRect(); fieldTap(e.clientX - r.left, e.clientY - r.top); }
+      MAP.ptrs.delete(e.pointerId); MAP.pinch = 0;
+    };
     cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
     cv.addEventListener("wheel", (e) => { e.preventDefault(); const r = cv.getBoundingClientRect(); zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.25 : 0.8); }, { passive: false });
     $("field-zin").onclick = () => zoomAt(MAP.W / 2, MAP.H / 2, 1.5);
     $("field-zout").onclick = () => zoomAt(MAP.W / 2, MAP.H / 2, 1 / 1.5);
     $("field-center").onclick = () => { if (!fld.pos) { toast("Padėtis dar negauta", true); return; } MAP.follow = true; centerOnUser(); };
     $("field-fit").onclick = () => { MAP.follow = false; fitMap(); drawMap(); };
+    $("field-lp").onclick = () => { cfg.mapLp = !lpOn(); saveCfg(cfg); if (!lpOn()) hideLpPop(); toast(cfg.mapLp ? "Vietiniai punktai rodomi" : "Vietiniai punktai paslėpti"); drawMap(); };
+    $("field-lp-x").onclick = () => { hideLpPop(); drawMap(); };
     $("field-bg").onclick = () => { cfg.mapBg = !bgOn(); saveCfg(cfg); toast(cfg.mapBg ? "OSM fonas įjungtas" : "OSM fonas išjungtas"); drawMap(); };
     if (window.ResizeObserver) { fld.ro = new ResizeObserver(() => { sizeCanvas(); drawMap(); }); fld.ro.observe(cv.parentElement); }
     window.addEventListener("orientationchange", () => setTimeout(() => { sizeCanvas(); fitMap(); drawMap(); }, 300));
@@ -1065,7 +1075,7 @@ function fitMap() {
   const main = MAP.polys.filter((p) => p.role === "main");
   (main.length ? main : MAP.polys).forEach((p) => p.rings.forEach((r) => r.forEach(([x, y]) => { xs.push(x); ys.push(y); })));
   MAP.pts.forEach((p) => { xs.push(p.xy[0]); ys.push(p.xy[1]); });
-  if (!xs.length) { MAP.cx = 0; MAP.cy = 0; MAP.scale = 2; return; }
+  if (!xs.length) { MAP.cx = 0; MAP.cy = 0; MAP.scale = Math.max(0.5, Math.min(MAP.W, MAP.H) / 160); return; }
   const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
   MAP.cx = (x0 + x1) / 2; MAP.cy = (y0 + y1) / 2;
   const w = Math.max(x1 - x0, 10), h = Math.max(y1 - y0, 10);
@@ -1148,6 +1158,7 @@ function drawMap() {
       }
     }
   }
+  drawLocalPoints(c);
   for (const p of MAP.pts) {
     const x = sx_(p.xy[0]), y = sy_(p.xy[1]);
     c.fillStyle = "#e8201f"; c.strokeStyle = "#fff"; c.lineWidth = 2; c.beginPath(); c.arc(x, y, 7, 0, 6.2832); c.fill(); c.stroke();
@@ -1170,6 +1181,239 @@ function drawMap() {
   c.strokeStyle = txt; c.fillStyle = txt; c.lineWidth = 2; c.beginPath(); c.moveTo(12, MAP.H - 14); c.lineTo(12 + m * MAP.scale, MAP.H - 14); c.stroke();
   c.font = "12px system-ui,sans-serif"; c.textAlign = "left"; c.fillText(m >= 1 ? m + " m" : (m * 100) + " cm", 12, MAP.H - 20);
   c.textAlign = "center"; c.font = "bold 13px system-ui,sans-serif"; c.fillText("▲ Š", MAP.W - 22, 20);
+}
+
+/* ---- vietiniai geodezijos punktai (Vilniaus_m_vietiniai_p.shp; stilius kaip QGIS Tmz_punktai.qml) ---- */
+const LP_COL = { "1": ["#166dd7", 1, "rastas"], "2": ["#b80000", 1, "nerastas"], "3": ["#fafd21", 1, "pažeistas"], "5": ["#b977d7", 0.3, "istorinis"] };
+const LP_ORDER = ["PPAV", "DATA", "Bukle", "Abrisas", "PTIP", "PKLAS", "ZTIP", "X", "Y", "H_VIETINE", "H_BALTIJOS", "RASTVIETOV", "Matavo", "photo", "ID"];
+const lpOn = () => cfg.mapLp !== false;
+const lpCol = (at) => LP_COL[String(at.Bukle || "").trim()] || ["#ffffff", 1, ""];
+/* QGIS užrašas: PPAV, eilutė DATA + " m", eilutė " (a)" kai Abrisas netuščias */
+function lpLabel(at) {
+  const L = [];
+  if (at.PPAV) L.push(at.PPAV);
+  if (at.DATA) L.push(at.DATA + " m");
+  if (String(at.Abrisas || "").trim()) L.push("(a)");
+  return L;
+}
+function drawLocalPoints(c) {
+  if (!MAP.lp.length || !lpOn()) return;
+  const vis = [];
+  for (const p of MAP.lp) {
+    const x = sx_(p.xy[0]), y = sy_(p.xy[1]);
+    if (x < -40 || y < -40 || x > MAP.W + 40 || y > MAP.H + 40) continue;
+    vis.push([p, x, y]);
+  }
+  const labels = vis.length <= 40 || MAP.scale >= 1.5;
+  c.lineJoin = "round";
+  for (const [p, x, y] of vis) {
+    const col = lpCol(p.at);
+    c.globalAlpha = col[1]; c.fillStyle = col[0]; c.strokeStyle = "#232323"; c.lineWidth = 1;
+    c.beginPath(); c.arc(x, y, 5.5, 0, 6.2832); c.fill(); c.stroke();
+    c.globalAlpha = 1;
+  }
+  if (labels) {
+    c.font = "11px system-ui,sans-serif"; c.textAlign = "left"; c.lineWidth = 3; c.strokeStyle = "rgba(255,255,255,.85)"; c.fillStyle = "#e31a1c";
+    for (const [p, x, y] of vis) lpLabel(p.at).forEach((t, i) => { c.strokeText(t, x + 9, y - 2 + i * 12); c.fillText(t, x + 9, y - 2 + i * 12); });
+  }
+  if (MAP.lpSel) {
+    const x = sx_(MAP.lpSel.xy[0]), y = sy_(MAP.lpSel.xy[1]);
+    c.strokeStyle = "#ff8a00"; c.lineWidth = 3; c.beginPath(); c.arc(x, y, 10, 0, 6.2832); c.stroke();
+  }
+}
+function hideLpPop() { MAP.lpSel = null; const el = $("field-lp-pop"); if (el) el.hidden = true; }
+function showLpPop(p) {
+  const at = p.at || {}, col = lpCol(at), keys = LP_ORDER.filter((k) => at[k] != null && at[k] !== "").concat(Object.keys(at).filter((k) => !LP_ORDER.includes(k)));
+  let dist = "";
+  if (fld.pos) { const [ux, uy] = toM(fld.pos.lon, fld.pos.lat); dist = ` · nuo jūsų ${fmtM(Math.hypot(ux - p.xy[0], uy - p.xy[1]))}`; }
+  const rows = keys.map((k) => {
+    let v = String(at[k]);
+    if (k === "Bukle" && col[2]) v += " (" + col[2] + ")";
+    const val = /^https?:\/\//i.test(v) ? `<a href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a>` : esc(v);
+    return `<tr><td>${esc(k)}</td><td>${val}</td></tr>`;
+  }).join("");
+  $("field-lp-body").innerHTML = `<div><span class="dot" style="background:${col[0]};opacity:${Math.max(col[1], 0.5)}"></span><b>${esc(at.PPAV || at.ID || "Vietinis punktas")}</b>${col[2] ? " · " + esc(col[2]) : ""}<span class="muted small">${esc(dist)}</span></div>` +
+    (rows ? `<table>${rows}</table>` : '<div class="muted small">Savybių nėra.</div>');
+  $("field-lp-pop").hidden = false;
+}
+function fieldTap(sx, sy) {
+  if (!MAP.lp.length || !lpOn()) { hideLpPop(); return; }
+  let best = null, bd = 30;
+  for (const p of MAP.lp) { const d = Math.hypot(sx_(p.xy[0]) - sx, sy_(p.xy[1]) - sy); if (d < bd) { bd = d; best = p; } }
+  if (!best) { if (MAP.lpSel) { hideLpPop(); scheduleDraw(); } return; }
+  MAP.lpSel = best; showLpPop(best); scheduleDraw();
+}
+
+/* ---- vietinių punktų duomenys iš OneDrive (telefonas skaito SHP/DBF tiesiai per Microsoft Graph; kompiuterio nereikia) ---- */
+const LPD = { dir: "NAVAROTAI/Vietiniai punktai/Vilniaus m", base: "vilniaus_m_vietiniai_p", pts: null, meta: null, promise: null, maxAgeDays: 14 };
+function updateLegend() {
+  $("field-legend").textContent = (MAP.legendBase || "") + (MAP.lp.length ? ` Vietiniai punktai (${MAP.lp.length}): mėlyna – rastas, raudona – nerastas, geltona – pažeistas, violetinė – istorinis, balta – būklė nenurodyta; užrašas: PPAV, DATA m, (a) – yra abrisas. Palieskite punktą – savybės; 📌 – rodyti/slėpti.` : "");
+}
+function lks94ToWgs(E, N) {
+  const a = 6378137.0, f = 1 / 298.257222101, e2 = f * (2 - f), ep2 = e2 / (1 - e2), k0 = 0.9998, E0 = 500000.0, lon0 = 24 * Math.PI / 180;
+  const M = N / k0, mu = M / (a * (1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256)), e1 = (1 - Math.sqrt(1 - e2)) / (1 + Math.sqrt(1 - e2));
+  const J1 = 3 * e1 / 2 - 27 * e1 ** 3 / 32, J2 = 21 * e1 ** 2 / 16 - 55 * e1 ** 4 / 32, J3 = 151 * e1 ** 3 / 96, J4 = 1097 * e1 ** 4 / 512;
+  const fp = mu + J1 * Math.sin(2 * mu) + J2 * Math.sin(4 * mu) + J3 * Math.sin(6 * mu) + J4 * Math.sin(8 * mu);
+  const sinf = Math.sin(fp), cosf = Math.cos(fp), tanf = Math.tan(fp), C1 = ep2 * cosf * cosf, T1 = tanf * tanf;
+  const N1 = a / Math.sqrt(1 - e2 * sinf * sinf), R1 = a * (1 - e2) / Math.pow(1 - e2 * sinf * sinf, 1.5), D = (E - E0) / (N1 * k0);
+  const lat = fp - (N1 * tanf / R1) * (D ** 2 / 2 - (5 + 3 * T1 + 10 * C1 - 4 * C1 ** 2 - 9 * ep2) * D ** 4 / 24 + (61 + 90 * T1 + 298 * C1 + 45 * T1 ** 2 - 252 * ep2 - 3 * C1 ** 2) * D ** 6 / 720);
+  const lon = lon0 + (D - (1 + 2 * T1 + C1) * D ** 3 / 6 + (5 - 2 * C1 + 28 * T1 - 3 * C1 ** 2 + 8 * ep2 + 24 * T1 ** 2) * D ** 5 / 120) / cosf;
+  return [lat * 180 / Math.PI, lon * 180 / Math.PI];
+}
+function lpParseShp(buf, shxBuf) {
+  const dv = new DataView(buf), out = [];
+  const rec = (off) => { const p = off + 8; if (p + 20 > buf.byteLength) return null; const t = dv.getInt32(p, true); return (t === 1 || t === 11 || t === 21) ? [dv.getFloat64(p + 4, true), dv.getFloat64(p + 12, true)] : null; };
+  if (shxBuf) { const sv = new DataView(shxBuf), n = Math.floor((shxBuf.byteLength - 100) / 8); for (let i = 0; i < n; i++) out.push(rec(sv.getInt32(100 + i * 8, false) * 2)); }
+  else { let p = 100; while (p + 8 <= buf.byteLength) { const w = dv.getInt32(p + 4, false); out.push(rec(p)); p += 8 + w * 2; } }
+  return out;
+}
+function lpParseDbf(buf, cpg) {
+  const u8 = new Uint8Array(buf), dv = new DataView(buf), nrec = dv.getUint32(4, true), hlen = dv.getUint16(8, true), rlen = dv.getUint16(10, true);
+  const fields = [];
+  for (let p = 32; p < hlen - 1 && u8[p] !== 0x0D; p += 32) { let nm = ""; for (let k = 0; k < 11 && u8[p + k]; k++) nm += String.fromCharCode(u8[p + k]); fields.push([nm.trim(), u8[p + 16]]); }
+  const cp = /1250/.test(cpg || "") ? "windows-1250" : /1252/.test(cpg || "") ? "windows-1252" : "windows-1257";
+  let u8d, cpd; try { u8d = new TextDecoder("utf-8", { fatal: true }); cpd = new TextDecoder(cp); } catch (_) { u8d = null; cpd = new TextDecoder(); }
+  const dec = (a, b) => {
+    let ascii = true; for (let i = a; i < b; i++) if (u8[i] > 127) { ascii = false; break; }
+    if (ascii) { let s = ""; for (let i = a; i < b; i++) s += String.fromCharCode(u8[i]); return s.replace(/\0/g, "").trim(); }
+    const sub = u8.subarray(a, b); let s; try { s = u8d ? u8d.decode(sub) : cpd.decode(sub); } catch (_) { s = cpd.decode(sub); } return s.replace(/\0/g, "").trim();
+  };
+  const rows = []; let p = hlen;
+  for (let i = 0; i < nrec; i++, p += rlen) {
+    if (p + rlen > buf.byteLength) break;
+    if (u8[p] === 0x2A) { rows.push(null); continue; }
+    let pos = p + 1; const row = {};
+    for (const [nm, ln] of fields) { const v = dec(pos, pos + ln); pos += ln; if (v !== "") row[nm] = v; }
+    rows.push(row);
+  }
+  return rows;
+}
+function lpEn(a, b) {
+  if (!isFinite(a) || !isFinite(b)) return null;
+  for (const [e, n] of [[a, b], [b, a]]) if (e > 100000 && e < 900000 && n > 5500000 && n < 6500000) return [e, n];
+  return null;
+}
+function lpBuild(shpBuf, dbfBuf, shxBuf, cpg) {
+  const geo = lpParseShp(shpBuf, shxBuf), rows = lpParseDbf(dbfBuf, cpg), pts = []; let g = 0, a = 0, bad = 0;
+  const num = (v) => parseFloat(String(v == null ? "" : v).replace(",", "."));
+  const pick = (at, k) => { const lk = k.toLowerCase(); for (const key in at) if (key.toLowerCase() === lk) return at[key]; return null; };
+  for (let i = 0; i < rows.length; i++) {
+    const at = rows[i]; if (!at) continue;
+    let en = geo[i] ? lpEn(geo[i][0], geo[i][1]) : null;
+    if (en) g++; else {
+      for (const [kx, ky] of [["x_lks", "y_lks"], ["X1", "Y1"], ["X", "Y"]]) { en = lpEn(num(pick(at, kx)), num(pick(at, ky))); if (en) { a++; break; } }
+    }
+    if (!en) { bad++; continue; }
+    const [lat, lon] = lks94ToWgs(en[0], en[1]);
+    pts.push([Math.round(lat * 1e7) / 1e7, Math.round(lon * 1e7) / 1e7, at]);
+  }
+  return { pts, stats: { total: rows.length, geo: g, attr: a, bad } };
+}
+async function lpDownload(itemUrl) {
+  const m = await graphFetch(`${itemUrl}?select=id,size,eTag,@microsoft.graph.downloadUrl`, { method: "GET" });
+  if (m.status === 404) return null;
+  if (!m.ok) throw httpErr(m, await m.text());
+  const meta = await m.json(), dl = meta["@microsoft.graph.downloadUrl"];
+  let r;
+  if (dl) r = await fetch(dl); else r = await graphFetch(`${itemUrl}/content`, { method: "GET" });
+  if (!r.ok) throw new Error("Atsisiuntimas: HTTP " + r.status);
+  return { buf: await r.arrayBuffer(), etag: meta.eTag || "" };
+}
+async function lpFindFiles() {
+  /* 1) numatytas aplankas, 2) paieška visame OneDrive */
+  let items = null;
+  let r = await graphFetch(`${GRAPH}/me/drive/root:/${encPath(LPD.dir)}:/children?$select=id,name,size,eTag&$top=200`, { method: "GET" });
+  if (r.ok) items = (await r.json()).value || [];
+  const pickSet = (list) => {
+    const lc = (list || []).map((x) => ({ x, n: String(x.name || "").toLowerCase() }));
+    const shp = lc.find((i) => i.n.startsWith(LPD.base) && i.n.endsWith(".shp")) || lc.find((i) => i.n.includes("vietiniai_p") && i.n.endsWith(".shp"));
+    if (!shp) return null;
+    const stem = shp.n.slice(0, -4), f = (ext) => (lc.find((i) => i.n === stem + ext) || {}).x;
+    return { shp: shp.x, dbf: f(".dbf"), shx: f(".shx"), cpg: f(".cpg") };
+  };
+  let set = pickSet(items);
+  if (!set) {
+    r = await graphFetch(`${GRAPH}/me/drive/root/search(q='vietiniai_p')?$select=id,name,parentReference&$top=50`, { method: "GET" });
+    if (r.ok) {
+      const found = ((await r.json()).value || []).filter((x) => /vietiniai_p.*\.shp$/i.test(x.name || ""));
+      if (found.length) {
+        const pid = found[0].parentReference && found[0].parentReference.id;
+        if (pid) { const c = await graphFetch(`${GRAPH}/me/drive/items/${pid}/children?$select=id,name,size,eTag&$top=200`, { method: "GET" }); if (c.ok) set = pickSet((await c.json()).value || []); }
+      }
+    }
+  }
+  if (!set || !set.dbf) throw new Error("OneDrive nerastas Vilniaus_m_vietiniai_p.shp / .dbf (aplankas NAVAROTAI/Vietiniai punktai/Vilniaus m)");
+  return set;
+}
+async function lpFetchAll(silent) {
+  if (!cfgReady() || !Auth.signedIn()) throw new Error("Reikia prisijungti (Nustatymai)");
+  if (!navigator.onLine) throw new Error("Nėra ryšio");
+  if (!silent) toast("Kraunami vietiniai punktai iš OneDrive…");
+  const set = await lpFindFiles();
+  const get = async (x) => x ? lpDownload(`${GRAPH}/me/drive/items/${x.id}`) : null;
+  const dbf = await get(set.dbf), shp = await get(set.shp), shx = await get(set.shx), cpg = await get(set.cpg);
+  if (!dbf || !shp) throw new Error("Nepavyko atsisiųsti SHP / DBF");
+  const res = lpBuild(shp.buf, dbf.buf, shx ? shx.buf : null, cpg ? new TextDecoder().decode(cpg.buf) : "");
+  if (!res.pts.length) throw new Error(`SHP neturi tinkamų LKS94 koordinačių (įrašų ${res.stats.total})`);
+  const meta = { ts: Date.now(), name: set.shp.name, etag: (shp.etag || "") + "|" + (dbf.etag || ""), stats: res.stats };
+  await cachePut("lpdata", { meta, pts: res.pts });
+  LPD.pts = res.pts; LPD.meta = meta;
+  log(`Vietiniai punktai: ${res.pts.length} (įrašų ${res.stats.total}, geometrija ${res.stats.geo}, atributai ${res.stats.attr}, be koordinačių ${res.stats.bad})`);
+  return res.pts;
+}
+/* Grąžina visus punktus: atmintyje → IndexedDB → OneDrive. Jei talpykla sena (> maxAgeDays) ir yra ryšys – atnaujina fone. */
+function lpLoad(force) {
+  if (LPD.pts && !force) return Promise.resolve(LPD.pts);
+  if (LPD.promise) return LPD.promise;
+  LPD.promise = (async () => {
+    if (!force) {
+      const c = await cacheGet("lpdata");
+      if (c && c.pts && c.pts.length) {
+        LPD.pts = c.pts; LPD.meta = c.meta || {};
+        if (navigator.onLine && cfgReady() && Auth.signedIn() && Date.now() - ((c.meta || {}).ts || 0) > LPD.maxAgeDays * 86400000) lpFetchAll(true).then(() => toast("Vietinių punktų duomenys atnaujinti")).catch((e) => log("Vietinių punktų atnaujinimas: " + e.message));
+        return LPD.pts;
+      }
+    }
+    return lpFetchAll(false);
+  })().finally(() => { LPD.promise = null; });
+  return LPD.promise;
+}
+function lpNear(lat, lon, rad, max) {
+  const dlat = rad / 111195, dlon = rad / (111195 * Math.cos(lat * Math.PI / 180)), out = [];
+  for (const p of LPD.pts || []) if (Math.abs(p[0] - lat) <= dlat && Math.abs(p[1] - lon) <= dlon) out.push(p);
+  if (out.length > max) { out.sort((a, b) => Math.hypot(a[0] - lat, (a[1] - lon) * 0.58) - Math.hypot(b[0] - lat, (b[1] - lon) * 0.58)); out.length = max; }
+  return out;
+}
+async function lpAttach(pkg) {
+  if (pkg.local_points && pkg.local_points.length) { updateLegend(); return; }
+  try {
+    const pts = await lpLoad(false);
+    if (!pts || !fld.mapOpen || MAP.pkg !== pkg) return;
+    const bb = pkg.bbox, lat = MAP.lat0, lon = MAP.lon0;
+    let rad = 450;
+    if (bb) rad += Math.max((bb[2] - bb[0]) * MAP.kx, (bb[3] - bb[1]) * MAP.ky) / 2;
+    const near = lpNear(lat, lon, rad, 1500);
+    MAP.lp = near.map(([la, lo, at]) => ({ xy: toM(lo, la), at })); MAP.lpSel = null;
+    $("field-lp").hidden = !MAP.lp.length; updateLegend(); scheduleDraw();
+    if (!MAP.lp.length) toast("Šalia vietinių punktų nėra (≤ " + Math.round(rad) + " m)");
+  } catch (e) { log("Vietiniai punktai: " + e.message); if (fld.mapOpen) toast("Vietinių punktų nėra: " + e.message, true); }
+}
+/* Žemėlapis tik su vietiniais punktais aplink mano vietą – kompiuterio nereikia */
+function lpNearMe() {
+  if (!("geolocation" in navigator)) { toast("Naršyklė nepalaiko vietos nustatymo", true); return; }
+  const b = $("field-lpnear"), label = b.textContent; b.disabled = true; b.textContent = "Gaunama padėtis…";
+  const reset = () => { b.disabled = false; b.textContent = label; };
+  navigator.geolocation.getCurrentPosition((p) => {
+    reset();
+    const lat = p.coords.latitude, lon = p.coords.longitude, dy = 80 / 111195, dx = 80 / (111195 * Math.cos(lat * Math.PI / 180));
+    openFieldMap({ project_no: "VIETINIAI", title: "Vietiniai punktai", fetched: localISO(), points: [], parcels: [], notes: [], bbox: [lon - dx, lat - dy, lon + dx, lat + dy] }, { test: true, lpOnly: true });
+  }, (e) => { reset(); toast("Padėtis negauta: " + e.message + ". Leiskite naršyklei naudoti vietą.", true); },
+  { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+}
+async function lpReloadNow() {
+  const info = $("set-lpinfo"); info.textContent = "Kraunama…";
+  try { const pts = await lpFetchAll(true); info.textContent = `Gauta punktų: ${pts.length}`; toast("Vietiniai punktai atnaujinti"); }
+  catch (e) { info.textContent = "Klaida: " + e.message; toast(e.message, true); }
 }
 
 /* ---- padėtis ir atstumai ---- */
@@ -1237,6 +1481,8 @@ function bindField() {
   $("field-project").onclick = () => openPicker((prj) => { if (prj) { fld.prj = prj; setPick($("field-project"), prj, "Pasirinkite projektą…"); } }, { title: "Lauko paketas" });
   $("field-get").onclick = fieldRequest;
   $("field-test").onclick = fieldTest;
+  $("field-lpnear").onclick = lpNearMe;
+  $("set-lpreload").onclick = lpReloadNow;
   $("field-here").onclick = fieldHere;
   $("field-mark").onclick = () => {
     if (!fld.pos) { toast("Padėtis dar negauta", true); return; }
