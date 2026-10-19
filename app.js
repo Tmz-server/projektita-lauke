@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.11.0";
+const VERSION = "1.11.1";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -1456,6 +1456,8 @@ function drawLocalPoints(c) {
   c.lineJoin = "round";
   for (const [p, x, y] of vis) {
     const col = lpCol(p.at);
+    c.globalAlpha = 0.28 * Math.max(col[1], 0.5); c.fillStyle = col[0];
+    c.beginPath(); c.arc(x, y, 11, 0, 6.2832); c.fill();   // švytėjimas – punktai matomi ir tolimesniame mastelyje
     c.globalAlpha = col[1]; c.fillStyle = col[0]; c.strokeStyle = "#232323"; c.lineWidth = 1;
     c.beginPath(); c.arc(x, y, 5.5, 0, 6.2832); c.fill(); c.stroke();
     c.globalAlpha = 1;
@@ -2181,6 +2183,7 @@ function arTargets(ux, uy) {   // kalibravimo / etikečių taikiniai
   MAP.polys.filter((p) => p.role === "main").forEach((p) => p.rings[0].forEach(([x, y], i) => t.push({ label: "Posūkio taškas " + (i + 1), short: "P" + (i + 1), x, y })));
   MAP.pts.forEach((p) => t.push({ label: "Objekto taškas " + p.label, short: p.label, x: p.xy[0], y: p.xy[1], obj: true }));
   MAP.marks.forEach((p) => t.push({ label: "Žyma " + p.label, short: p.label, x: p.xy[0], y: p.xy[1], obj: true }));
+  if (MAP.lp.length && lpOn()) MAP.lp.forEach((p) => { const nm = String((p.at && (p.at.PPAV || p.at.ID)) || "?"); t.push({ label: "Vietinis punktas " + nm, short: nm, x: p.xy[0], y: p.xy[1], lp: true, at: p.at || {} }); });
   t.forEach((q) => { q.d = Math.hypot(q.x - ux, q.y - uy); });
   return t.sort((a, b) => a.d - b.d);
 }
@@ -2233,11 +2236,15 @@ function arDraw() {
   const lab = (t, col) => {
     const p = arPoint(t.x, t.y, ux, uy); if (p[2] < NEAR) return;
     const [sx, sy] = arScreen(p); if (sx < -40 || sx > AR.W + 40 || sy < -40 || sy > AR.H + 40) return;
-    c.fillStyle = col; c.strokeStyle = "#fff"; c.lineWidth = 2; c.beginPath(); c.arc(sx, sy, t.obj ? 9 : 6, 0, 6.2832); c.fill(); c.stroke();
-    c.font = "bold 14px system-ui,sans-serif"; c.textAlign = "left"; const tx = t.short + " · " + fmtM(t.d), w = c.measureText(tx).width;
+    if (t.lp) {   // vietinis punktas: švytintis žiedas + taškas būklės spalva
+      c.save(); c.shadowColor = col; c.shadowBlur = 18; c.fillStyle = "rgba(255,255,255,.35)"; c.beginPath(); c.arc(sx, sy, 15, 0, 6.2832); c.fill(); c.restore();
+      c.strokeStyle = col; c.lineWidth = 3; c.beginPath(); c.arc(sx, sy, 15, 0, 6.2832); c.stroke();
+    }
+    c.fillStyle = col; c.strokeStyle = "#fff"; c.lineWidth = 2; c.beginPath(); c.arc(sx, sy, t.lp ? 8 : t.obj ? 9 : 6, 0, 6.2832); c.fill(); c.stroke();
+    c.font = "bold 14px system-ui,sans-serif"; c.textAlign = "left"; const tx = t.short + (t.lp && t.at && t.at.DATA ? " " + t.at.DATA + " m" : "") + " · " + fmtM(t.d), w = c.measureText(tx).width;
     c.fillStyle = "rgba(0,0,0,.65)"; c.fillRect(sx + 10, sy - 18, w + 10, 22); c.fillStyle = "#fff"; c.fillText(tx, sx + 15, sy - 2);
   };
-  for (const t of arTargets(ux, uy)) if (t.d < 200) lab(t, t.obj ? "#e8201f" : "#ffd400");
+  for (const t of arTargets(ux, uy)) if (t.d < 200) lab(t, t.lp ? lpCol(t.at)[0] : t.obj ? "#e8201f" : "#ffd400");
 }
 function arPickTarget() {
   if (!fld.pos) { toast("Padėtis dar negauta", true); return; }
