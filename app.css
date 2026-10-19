@@ -120,6 +120,8 @@ input:focus,select:focus,textarea:focus,.pick:focus{outline:2px solid var(--prim
 .fld-lp td:first-child{color:var(--muted);width:36%}
 .fld-lp .lp-edit,.fld-lp .lp-ph{margin-top:10px}
 .fld-lp .lp-edit .row{display:flex;gap:6px;align-items:center}
+.fld-lp .lp-edit textarea{width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--text);font:inherit;font-size:15px;resize:vertical}
+.fld-lp .lp-edit textarea+.btn{margin-top:6px}
 .fld-lp .lp-edit input{flex:1;min-width:0;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--text);font-size:15px}
 .fld-lp .lp-ph .btn{margin-top:6px}
 .banner.info{background:var(--primary-soft);color:var(--text);font-weight:500}
