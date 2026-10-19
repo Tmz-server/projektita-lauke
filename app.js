@@ -2208,7 +2208,68 @@ async function fmSetProject(prj) {
 }
 
 /* ------------------------------------------------------------------ Abriso juodraštis (pastatų kontūrai 2601/2602 iš DWG) */
-const fmab = { blds: [], sides: [], sel: -1, tol: 0.10, move: false, draw: null, drag: null, tf: null, draft: null, full: false };
+const fmab = { blds: [], sides: [], sel: -1, tol: 0.10, move: false, draw: null, drag: null, tf: null, draft: null, full: false, view: { k: 1, cx: null, cy: null }, base: null, ptrs: new Map(), gest: null, noClick: false };
+/* Mastelis ir stumdymas (viewBox): ＋/－ mygtukai, dviejų pirštų suspaudimas, vieno piršto stumdymas, pelės ratukas */
+function fmAbGeom() { const r = $("fm-ab-svg").getBoundingClientRect(), b = fmab.base; return r.width && b ? { r, b } : null; }
+function fmAbScale(g, k) { return Math.min(g.r.width / (g.b.vbw / k), g.r.height / (g.b.vbh / k)); }
+function fmAbToSvg(g, mx, my, k, cx, cy) {
+  const vw = g.b.vbw / k, vh = g.b.vbh / k, s = fmAbScale(g, k);
+  return [cx - vw / 2 + (mx - g.r.left - (g.r.width - s * vw) / 2) / s, cy - vh / 2 + (my - g.r.top - (g.r.height - s * vh) / 2) / s];
+}
+function fmAbSetView(k, cx, cy) {
+  const b = fmab.base; if (!b) return;
+  k = Math.max(1, Math.min(40, k));
+  if (k <= 1.0001) { k = 1; cx = b.bx + b.vbw / 2; cy = b.by + b.vbh / 2; }
+  fmab.view = { k, cx: Math.max(b.bx, Math.min(b.bx + b.vbw, cx)), cy: Math.max(b.by, Math.min(b.by + b.vbh, cy)) };
+}
+function fmAbVBox() { const v = fmab.view, b = fmab.base, vw = b.vbw / v.k, vh = b.vbh / v.k; return `${v.cx - vw / 2} ${v.cy - vh / 2} ${vw} ${vh}`; }
+/* k2 – naujas mastelis; (mx,my) – ekrano taškas, po kuriuo esantis brėžinio taškas `anchor` turi likti vietoje */
+function fmAbZoomAt(k2, mx, my, anchor) {
+  const g = fmAbGeom(); if (!g) return;
+  k2 = Math.max(1, Math.min(40, k2));
+  const a = anchor || fmAbToSvg(g, mx, my, fmab.view.k, fmab.view.cx, fmab.view.cy);
+  const vw = g.b.vbw / k2, vh = g.b.vbh / k2, s = fmAbScale(g, k2);
+  fmAbSetView(k2, a[0] - (mx - g.r.left - (g.r.width - s * vw) / 2) / s + vw / 2, a[1] - (my - g.r.top - (g.r.height - s * vh) / 2) / s + vh / 2);
+}
+function fmAbZoomBtn(f) { const g = fmAbGeom(); if (!g) return; fmAbZoomAt(fmab.view.k * f, g.r.left + g.r.width / 2, g.r.top + g.r.height / 2); fmAbRender(); }
+function fmAbGestureBind(svg) {
+  const info = () => { const a = [...fmab.ptrs.values()]; return { n: a.length, mx: a.reduce((t, q) => t + q.x, 0) / (a.length || 1), my: a.reduce((t, q) => t + q.y, 0) / (a.length || 1), d: a.length > 1 ? Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) : 0 }; };
+  const begin = () => {
+    const g = fmAbGeom(), i = info(); if (!g || !i.n) { fmab.gest = null; return; }
+    fmab.gest = { k: fmab.view.k, cx: fmab.view.cx, cy: fmab.view.cy, mx: i.mx, my: i.my, d: i.d, n: i.n, moved: fmab.gest ? fmab.gest.moved : false, anchor: fmAbToSvg(g, i.mx, i.my, fmab.view.k, fmab.view.cx, fmab.view.cy) };
+  };
+  svg.addEventListener("pointerdown", (e) => {
+    if (!fmab.full || fmab.drag || e.pointerType === "mouse" && e.button !== 0) return;
+    if (!fmab.ptrs.size) fmab.noClick = false;
+    fmab.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); begin();
+  });
+  svg.addEventListener("pointermove", (e) => {
+    if (!fmab.ptrs.has(e.pointerId) || fmab.drag || !fmab.gest) return;
+    fmab.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const i = info(), G = fmab.gest, g = fmAbGeom(); if (!g) return;
+    if (i.n >= 2 && G.d > 0) {
+      G.moved = true; fmab.noClick = true;
+      fmAbZoomAt(G.k * (i.d / G.d), i.mx, i.my, G.anchor);
+    } else if (i.n === 1) {
+      const dx = i.mx - G.mx, dy = i.my - G.my;
+      if (!G.moved && Math.hypot(dx, dy) < 8) return;
+      if (!G.moved) { G.moved = true; fmab.noClick = true; try { svg.setPointerCapture(e.pointerId); } catch (_) { /* */ } }
+      if (fmab.view.k > 1) { const s = fmAbScale(g, G.k); fmAbSetView(G.k, G.cx - dx / s, G.cy - dy / s); }
+    } else return;
+    svg.setAttribute("viewBox", fmAbVBox());
+  });
+  const up = (e) => {
+    if (!fmab.ptrs.delete(e.pointerId)) return;
+    const moved = fmab.gest && fmab.gest.moved;
+    if (fmab.ptrs.size) begin(); else { fmab.gest = null; if (moved) { fmAbRender(); setTimeout(() => { fmab.noClick = false; }, 60); } }
+  };
+  svg.addEventListener("pointerup", up); svg.addEventListener("pointercancel", up);
+  svg.addEventListener("click", (e) => { if (fmab.noClick) { e.stopPropagation(); e.preventDefault(); } }, true);
+  svg.addEventListener("wheel", (e) => {
+    if (!fmab.full) return;
+    e.preventDefault(); fmAbZoomAt(fmab.view.k * Math.exp(-e.deltaY * 0.0018), e.clientX, e.clientY); fmAbRender();
+  }, { passive: false });
+}
 const fmDelta = (v) => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(3).replace(".", ",") + " m";
 const FM_KINDS = [["pastatas", "Pastatas", true], ["ukinis", "Ūkinis pastatas / priestatas", true], ["tvora", "Tvora (linija)", false], ["kita", "Kita linija", false], ["kontura", "Kitas kontūras", true]];
 const cp = (pts) => pts.map((p) => [p[0], p[1]]);
@@ -2243,7 +2304,7 @@ function fmAbApplyDraft() {
   });
 }
 async function fmAbLoad(prj) {
-  fmab.sel = -1; fmab.blds = []; fmab.draw = null; fmab.drag = null;
+  fmab.sel = -1; fmab.blds = []; fmab.draw = null; fmab.drag = null; fmab.view = { k: 1, cx: null, cy: null };
   if (prj) {
     try {
       const d = await cacheGet("buildings:" + prj);
@@ -2339,16 +2400,18 @@ function fmAbRender() {
   drawPts.forEach((p) => { xs.push(p[0]); ys.push(p[1]); });
   const minx = Math.min(...xs), maxx = Math.max(...xs), miny = Math.min(...ys), maxy = Math.max(...ys);
   const w = Math.max(maxx - minx, 1), h = Math.max(maxy - miny, 1), pad = Math.max(w, h) * 0.16;
-  const vbw = w + 2 * pad, vbh = h + 2 * pad, fs = Math.max(vbw, vbh) * 0.036, sw = fs * 0.16;
+  const vbw = w + 2 * pad, vbh = h + 2 * pad, fz = Math.pow(fmab.view.k, 0.75), fs = Math.max(vbw, vbh) * 0.036 / fz, sw = fs * 0.16;
   fmab.tf = { minx, maxy };
-  svg.setAttribute("viewBox", `${-pad} ${-pad} ${vbw} ${vbh}`);
+  fmab.base = { bx: -pad, by: -pad, vbw, vbh };
+  if (fmab.view.cx == null) fmAbSetView(fmab.view.k, -pad + vbw / 2, -pad + vbh / 2); else fmAbSetView(fmab.view.k, fmab.view.cx, fmab.view.cy);
+  svg.setAttribute("viewBox", fmAbVBox());
   const X = (x) => (x - minx), Y = (y) => (maxy - y);
   const NS = "http://www.w3.org/2000/svg";
   const mk = (tag, attrs, txt) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (txt != null) e.textContent = txt; svg.appendChild(e); return e; };
   const cs = getComputedStyle(document.documentElement);
   const col = (v, d) => (cs.getPropertyValue(v) || d).trim() || d;
   const cPri = col("--primary", "#393187"), cMut = col("--muted", "#5d6079"), cAcc = col("--accent", "#e8201f"), cWarn = col("--warn", "#c4161c"), cSoft = col("--primary-soft", "#e8e7f5");
-  const bg = mk("rect", { x: -pad, y: -pad, width: vbw, height: vbh, fill: "transparent" });
+  const bg = mk("rect", { x: -pad - vbw * 10, y: -pad - vbh * 10, width: vbw * 21, height: vbh * 21, fill: "transparent" });
   bg.addEventListener("click", (e) => {
     if (!fmab.draw) return;
     const p = fmAbPtFromEvent(e); if (!p) return;
@@ -2392,7 +2455,7 @@ function fmAbRender() {
     drawPts.forEach((p) => mk("circle", { cx: X(p[0]), cy: Y(p[1]), r: sw * 1.6, fill: cAcc }));
   }
   info.textContent = `Objektų: ${fmab.blds.length}, kraštinių: ${fmab.sides.length}, išmatuota: ${done}` + (bad ? `, nukrypsta >${Math.round(fmab.tol * 100)} cm: ${bad}` : "") +
-    (fmab.draw ? " · Braižymas: palieskite brėžinį, kad pridėtumėte kampus" :
+    (fmab.full && fmab.view.k === 1 && !sel ? " · Mastelis: dviem pirštais arba ＋/－" : "") + (fmab.draw ? " · Braižymas: palieskite brėžinį, kad pridėtumėte kampus" :
       sel ? ` · ${sel.from} → ${sel.to}: dabar ${fmFmt(sel.len)}${sel.plan != null ? `, DWG ${fmFmt(sel.plan)}` : ""} – matuokite D2 arba įveskite ilgį` : " · Palieskite kraštinę ir matuokite");
 }
 function fmAbBar(sel) {
@@ -2405,6 +2468,9 @@ function fmAbBar(sel) {
 }
 function fmAbBind() {
   const svg = $("fm-ab-svg");
+  fmAbGestureBind(svg);
+  $("fm-ab-zin").onclick = () => fmAbZoomBtn(1.6); $("fm-ab-zout").onclick = () => fmAbZoomBtn(1 / 1.6);
+  $("fm-ab-zfit").onclick = () => { fmab.view = { k: 1, cx: null, cy: null }; fmAbRender(); };
   $("fm-ab-full").onclick = () => { fmab.full = !fmab.full; fmAbRender(); try { $("fm-abris").scrollTop = 0; } catch (_) { /* */ } };
   $("fm-ab-dist").oninput = () => { $("fm-dist").value = $("fm-ab-dist").value; };
   $("fm-ab-save").onclick = () => { if (fmab.sel < 0) return toast("Pirmiausia palieskite kraštinę", true); $("fm-dist").value = $("fm-ab-dist").value; $("fm-add").click(); };
