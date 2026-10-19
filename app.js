@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.9.1";
+const VERSION = "1.9.2";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -2113,6 +2113,7 @@ function fmRender() {
   fmAbRender();
 }
 function fmAdd(source) {
+  fm.pend = false;
   const from = $("fm-from").value.trim(), to = $("fm-to").value.trim(), dist = num($("fm-dist").value);
   if (!from || !to) return toast("Įrašykite „Nuo taško“ ir „Iki taško“", true);
   if (dist == null || !(dist > 0) || dist > 300) return toast("Įrašykite atstumą (0–300 m)", true);
@@ -2144,7 +2145,10 @@ function fmOnData(ev) {
     fmAbBar(fmab.sel >= 0 ? fmab.sides[fmab.sel] : null);
     try { if (navigator.vibrate) navigator.vibrate(70); } catch (_) { /* */ }
     log("DISTO: " + d.toFixed(4) + " m");
-    if ($("fm-auto").checked || fmab.sel >= 0) setTimeout(() => fmAdd("disto"), 0);
+    const auto = $("fm-auto").checked || fmab.sel >= 0;
+    fm.pend = !auto;
+    if (auto) setTimeout(() => fmAdd("disto"), 0);
+    else if (fmab.full) { toast("D2 " + fmFmt(d) + " – palieskite kraštinę ir spauskite „Priskirti D2“"); fmAbBar(null); }
   } else if (id.startsWith("3ab10102")) { fm.aux = hex.join(" "); }
 }
 async function fmSubscribe(server) {
@@ -2465,6 +2469,9 @@ function fmAbBar(sel) {
   if (document.activeElement !== inp) inp.value = $("fm-dist").value;
   $("fm-ab-live").textContent = fm.last != null ? "D2: " + fmFmt(fm.last) : "D2: —";
   $("fm-ab-conn").textContent = fm.on ? "Atjungti DISTO" : "Prijungti DISTO";
+  const use = $("fm-ab-use");
+  use.hidden = !(sel && fm.pend && fm.last != null);
+  if (!use.hidden) use.textContent = "Priskirti D2 " + fmFmt(fm.last) + " kraštinei " + sel.from + " → " + sel.to;
 }
 function fmAbBind() {
   const svg = $("fm-ab-svg");
@@ -2475,6 +2482,7 @@ function fmAbBind() {
   $("fm-ab-dist").oninput = () => { $("fm-dist").value = $("fm-ab-dist").value; };
   $("fm-ab-save").onclick = () => { if (fmab.sel < 0) return toast("Pirmiausia palieskite kraštinę", true); $("fm-dist").value = $("fm-ab-dist").value; $("fm-add").click(); };
   $("fm-ab-conn").onclick = () => $("fm-connect").click();
+  $("fm-ab-use").onclick = () => { if (fmab.sel < 0 || fm.last == null) return; $("fm-dist").value = fm.last.toFixed(3).replace(".", ","); fmAdd("disto"); };
   svg.addEventListener("pointermove", (e) => {
     if (!fmab.drag) return;
     const p = fmAbPtFromEvent(e); if (!p) return;
