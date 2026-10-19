@@ -112,6 +112,12 @@ input:focus,select:focus,textarea:focus,.pick:focus{outline:2px solid var(--prim
 .fld-ctl{position:absolute;right:8px;top:36px;display:flex;flex-direction:column;gap:8px}
 .fld-ctl button{width:44px;height:44px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--text);font-size:22px;font-weight:700;box-shadow:var(--shadow)}
 #field-wait .btn{margin-left:8px}
+.fld-lp{position:absolute;left:8px;right:64px;bottom:8px;max-height:58%;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 34px 10px 12px;box-shadow:var(--shadow);font-size:13px;line-height:1.4}
+.fld-lp .x{position:absolute;right:4px;top:2px;border:0;background:none;font-size:24px;line-height:1;color:var(--text);min-width:32px;min-height:32px}
+.fld-lp .dot{display:inline-block;width:12px;height:12px;border-radius:50%;border:1px solid #232323;margin-right:6px;vertical-align:-1px}
+.fld-lp table{width:100%;border-collapse:collapse;margin-top:6px}
+.fld-lp td{padding:2px 4px;border-top:1px solid var(--line);vertical-align:top;word-break:break-word}
+.fld-lp td:first-child{color:var(--muted);width:36%}
 .banner.info{background:var(--primary-soft);color:var(--text);font-weight:500}
 
 /* AR */
