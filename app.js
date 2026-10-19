@@ -417,7 +417,7 @@ async function refreshPoints(prj, silent) {
 async function refreshBuildings(prj, silent) {
   try {
     const j = await graphGetJson(`${inboxPath()}/_projektai/${slugPy(prj, 30)}_pastatai.json`);
-    if (!j) { if (!silent) toast("Šio projekto pastatų (kodai 2601/2602) sąrašo nėra – kompiuteryje atidarykite KADMAT taškus.", true); return null; }
+    if (!j) { if (!silent) toast("Šio projekto pastatų (sluoksniai 2601–2699) sąrašo nėra – kompiuteryje atidarykite KADMAT taškus.", true); return null; }
     await cachePut("buildings:" + prj, j); log(`Pastatai ${prj}: ${(j.buildings || []).length}`);
     return j;
   } catch (e) { log("Pastatai: " + e.message); if (!silent && !e.authRequired) toast("Nepavyko gauti pastatų: " + e.message, true); return null; }
@@ -2330,7 +2330,7 @@ function fmAbRender() {
   const drawPts = fmab.draw ? fmab.draw.pts : [];
   if (!fmab.blds.length && !drawPts.length) {
     svg.setAttribute("hidden", "");
-    info.textContent = fm.project ? "Šiam projektui pastatų (kodai 2601/2602) nėra – kompiuteryje KADMAT taškų lange spauskite „Abriso pastatai…“. Objektus galima pridėti ranka: ＋ Objektas." : "";
+    info.textContent = fm.project ? "Šiam projektui pastatų (sluoksniai 2601–2699) nėra – kompiuteryje KADMAT taškų lange spauskite „Abriso pastatai…“. Objektus galima pridėti ranka: ＋ Objektas." : "";
     return;
   }
   svg.removeAttribute("hidden");
@@ -2359,7 +2359,7 @@ function fmAbRender() {
     if (b.orig && fmab.blds[bi].pts.some((p, k) => Math.abs(p[0] - b.orig[k][0]) > 0.005 || Math.abs(p[1] - b.orig[k][1]) > 0.005))
       mk("polyline", { points: b.orig.concat(b.closed ? [b.orig[0]] : []).map((p) => `${X(p[0])},${Y(p[1])}`).join(" "), fill: "none", stroke: cMut, "stroke-width": sw * 0.6, "stroke-dasharray": `${sw * 1.5} ${sw * 1.5}`, opacity: "0.45" });
     if (b.closed) mk("polygon", { points: b.pts.map((p) => `${X(p[0])},${Y(p[1])}`).join(" "), fill: b.extra ? cWarn : cSoft, "fill-opacity": b.extra ? "0.12" : "0.55", stroke: "none" });
-    mk("text", { x: X(cen[bi][0]), y: Y(cen[bi][1]), "text-anchor": "middle", "font-size": fs * 1.1, fill: cMut, "font-weight": "700", opacity: "0.6" }, b.id);
+    mk("text", { x: X(cen[bi][0]), y: Y(cen[bi][1]), "text-anchor": "middle", "font-size": fs * 1.1, fill: cMut, "font-weight": "700", opacity: "0.6" }, b.id + (b.code && b.code !== "2601" && b.code !== "2602" ? " · " + b.code : ""));
   });
   let done = 0, bad = 0;
   fmab.sides.forEach((sd, i) => {
