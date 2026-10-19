@@ -175,11 +175,13 @@
     <div id="fm-abris" class="card fm-ab" hidden>
       <div class="row between"><b>Abriso juodraštis</b><span><button type="button" class="btn small primary" id="fm-ab-full">⛶ Planas</button> <button type="button" class="btn small ghost" id="fm-ab-refresh">⟳ Atnaujinti</button></span></div>
       <div id="fm-ab-info" class="small muted"></div>
-      <svg id="fm-ab-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" hidden></svg>
-      <div class="fm-ab-tools">
-        <button type="button" class="btn small ghost" id="fm-ab-zin" aria-label="Didinti">＋</button>
-        <button type="button" class="btn small ghost" id="fm-ab-zout" aria-label="Mažinti">－</button>
-        <button type="button" class="btn small ghost" id="fm-ab-zfit">⤢ Visas</button>
+      <div class="fm-ab-wrap">
+        <svg id="fm-ab-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" hidden></svg>
+        <div class="fm-ab-zoom">
+          <button type="button" id="fm-ab-zin" aria-label="Didinti">＋</button>
+          <button type="button" id="fm-ab-zout" aria-label="Mažinti">－</button>
+          <button type="button" id="fm-ab-zfit" aria-label="Rodyti visą">⤢</button>
+        </div>
       </div>
       <div class="fm-ab-tools">
         <button type="button" class="btn small ghost" id="fm-ab-len">✎ Ruletės ilgis</button>
