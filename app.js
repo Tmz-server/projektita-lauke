@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.11.1";
+const VERSION = "1.11.2";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -475,19 +475,19 @@ function renderHome() {
 }
 
 /* ------------------------------------------------------------------ projekto parinkimas */
-let pickerCb = null, pickerNav = false;
+let pickerCb = null, pickerNav = false, pickerOptional = false, pickerLastRefresh = 0;
 async function openPicker(cb, { optional = false, title = "Projektas", nav = false } = {}) {
-  pickerCb = cb; pickerNav = nav;
+  pickerCb = cb; pickerNav = nav; pickerOptional = optional;
   $("picker-title").textContent = title;
   $("picker").hidden = false;
   $("picker-q").value = ""; $("picker-manual").value = "";
   const data = await cacheGet("projects");
   $("picker-note").textContent = data ? "" : "Projektų sąrašo dar nėra – jį galima gauti prisijungus (Nustatymai → Atnaujinti projektų sąrašą) arba įrašyti PRJ numerį ranka.";
-  renderPicker();
-  if (!data && cfgReady() && Auth.signedIn()) { const j = await refreshProjects(true); if (j) { $("picker-note").textContent = ""; renderPicker(); } }
-  if (optional && !$("picker-none")) {
-    const li = document.createElement("li"); li.id = "picker-none"; li.innerHTML = '<div class="t">Be projekto</div>';
-    li.onclick = () => closePicker(""); $("picker-list").prepend(li);
+  await renderPicker();
+  // sąrašą visada pasitikriname fone (naujas projektas kompiuteryje atsiranda be rankinio „Atnaujinti“), ne dažniau kaip kas 30 s
+  if (cfgReady() && navigator.onLine && Auth.signedIn() && (!data || Date.now() - pickerLastRefresh > 30000)) {
+    pickerLastRefresh = Date.now();
+    refreshProjects(true).then((j) => { if (j && !$("picker").hidden) { $("picker-note").textContent = ""; renderPicker(); } });
   }
 }
 function closePicker(val) { $("picker").hidden = true; const cb = pickerCb; pickerCb = null; if (cb && val !== undefined) cb(val); }
@@ -514,6 +514,10 @@ async function renderPicker() {
     list.appendChild(li);
   }
   if (!projects.length && data) { const li = document.createElement("li"); li.className = "muted"; li.textContent = "Nieko nerasta."; list.appendChild(li); }
+  if (pickerOptional) {
+    const li = document.createElement("li"); li.id = "picker-none"; li.innerHTML = '<div class="t">Be projekto</div>';
+    li.onclick = () => closePicker(""); list.prepend(li);
+  }
 }
 function hasLoc(p) { return p && typeof p.lat === "number" && typeof p.lon === "number"; }
 async function navigateToProject(prj) {
