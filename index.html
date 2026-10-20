@@ -93,7 +93,25 @@
         <div id="marker-info" class="muted small"></div>
         <button type="button" class="btn small ghost" id="marker-refresh">Atnaujinti taškus</button>
       </div>
+      <div class="seg" id="marker-mode" hidden><button type="button" data-m="plan" class="on">Planas</button><button type="button" data-m="list">Sąrašas</button></div>
+      <div id="marker-nopl" class="muted small" hidden>Plano nėra: taškų koordinačių telefonas dar negavo. Kompiuteryje atidarykite projekto KADMAT taškus (programa nusiųs koordinates), tada čia spauskite „Atnaujinti taškus“.</div>
       <input id="marker-filter" type="search" inputmode="numeric" placeholder="Ieškoti taško Nr. …" autocomplete="off">
+      <div id="marker-plan" hidden>
+        <div class="mk-box">
+          <svg id="mk-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+          <div class="mk-zoom">
+            <button type="button" id="mk-zi" aria-label="Didinti">＋</button>
+            <button type="button" id="mk-zo" aria-label="Mažinti">－</button>
+            <button type="button" id="mk-fit" aria-label="Rodyti visus">⤢</button>
+            <button type="button" id="mk-gps" aria-label="Mano vieta">◎</button>
+          </div>
+        </div>
+        <div class="muted small" id="mk-hint">Palieskite tašką planete, tada „Fotografuoti“. Du pirštai – mastelis.</div>
+        <div id="mk-sel" class="mk-sel" hidden>
+          <div><b id="mk-sel-nr"></b> <span class="muted" id="mk-sel-k"></span><div class="small" id="mk-sel-n"></div></div>
+          <button type="button" class="btn primary" id="mk-shoot">Fotografuoti</button>
+        </div>
+      </div>
       <div class="chips" id="marker-chips"></div>
       <div id="marker-manual" class="manual" hidden>
         <p class="muted small" id="marker-manual-msg"></p>
@@ -216,6 +234,7 @@
           <button type="button" id="fm-ab-zin" aria-label="Didinti">＋</button>
           <button type="button" id="fm-ab-zout" aria-label="Mažinti">－</button>
           <button type="button" id="fm-ab-zfit" aria-label="Rodyti visą">⤢</button>
+          <button type="button" id="fm-ab-zln" class="vx" aria-label="Pripiešti linija">／</button>
           <button type="button" id="fm-ab-zwd" class="vx" aria-label="Sutapdinti kampus">⌖</button>
           <button type="button" id="fm-ab-zvx" class="vx" aria-label="Įterpti viršūnę į pasirinktą kraštinę" hidden>●＋</button>
         </div>
@@ -223,6 +242,7 @@
       <div class="fm-ab-tools">
         <button type="button" class="btn small ghost" id="fm-ab-len">✎ Ruletės ilgis</button>
         <button type="button" class="btn small ghost" id="fm-ab-move">✥ Kampai</button>
+        <button type="button" class="btn small ghost" id="fm-ab-ln">／ Linija</button>
         <button type="button" class="btn small ghost" id="fm-ab-add">＋ Objektas</button>
         <button type="button" class="btn small ghost" id="fm-ab-wd">⌖ Sutapdinti kampus</button>
         <button type="button" class="btn small ghost" id="fm-ab-vxu" hidden>↶ Atšaukti keitimą</button>
