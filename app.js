@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.13.0";
+const VERSION = "1.14.0";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -424,7 +424,7 @@ async function refreshBuildings(prj, silent) {
 }
 
 /* ------------------------------------------------------------------ UI pagrindas */
-const views = ["home", "note", "marker", "expense", "files", "contact", "field", "fm", "queue", "settings"];
+const views = ["home", "note", "marker", "expense", "files", "contact", "invoice", "field", "fm", "queue", "settings"];
 const stack = [];
 function show(name, push = true) {
   views.forEach((v) => { $("v-" + v).hidden = v !== name; });
@@ -722,6 +722,69 @@ function bindContact() {
     const fields = { project_no: ct.project, name, role: $("ct-role").value.trim(), phone: $("ct-phone").value.trim(), email: $("ct-email").value.trim(), notes: $("ct-notes").value.trim() };
     await enqueue("contact", fields, [], `${ct.project}: ${name}${fields.role ? " (" + fields.role + ")" : ""}${fields.phone ? " " + fields.phone : ""}`);
     toast("Kontaktas įrašytas į eilę"); stack.length = 0; show("home");
+  };
+}
+
+/* ------------------------------------------------------------------ SĄSKAITA BUHALTEREI (kaip PC laiškas „Sąskaita buhalterei“) */
+const inv = { project: "", p: null, to: "" };
+const invEur = (v) => (Math.round((+v || 0) * 100) / 100).toFixed(2).replace(".", ",") + " €";
+async function invProjectInfo(prj) {
+  const data = await cacheGet("projects");
+  inv.to = (data && data.accountant_email) || "";
+  inv.p = ((data && data.projects) || []).find((x) => x.project_no === prj) || null;
+  return inv.p;
+}
+function initInvoice() {
+  inv.project = ""; inv.p = null; setPick($("inv-project"), "", "Pasirinkite projektą…");
+  ["inv-customer", "inv-work", "inv-contract", "inv-amount", "inv-payer", "inv-code", "inv-vat", "inv-addr", "inv-note"].forEach((i) => { $(i).value = ""; });
+  $("inv-stage").value = "Avansas"; $("inv-fin").textContent = ""; $("inv-note-to").textContent = "";
+}
+async function invPick(prj) {
+  inv.project = prj; rememberProject(prj); setPick($("inv-project"), prj, "Pasirinkite projektą…");
+  const p = await invProjectInfo(prj); if (!p) { $("inv-fin").textContent = "Projekto duomenų sąraše nėra – atnaujinkite projektų sąrašą."; return; }
+  const f = p.fin || {}, total = +f.total || 0, paid = +f.paid || 0, invd = +f.invoiced || 0, remaining = Math.max(total - paid, 0);
+  $("inv-customer").value = p.client || ""; $("inv-payer").value = p.client || ""; $("inv-addr").value = p.client_address || "";
+  $("inv-work").value = p.work || ""; $("inv-contract").value = p.contract || "";
+  $("inv-amount").value = remaining > 0 ? remaining.toFixed(2).replace(".", ",") : "";
+  $("inv-stage").value = remaining > 0 && paid > 0 ? "Galutinis atsiskaitymas" : "Avansas";
+  $("inv-fin").textContent = p.fin ? `Sutarties suma: ${invEur(total)} · Išrašyta sąskaitų: ${invEur(invd)} · Gauta: ${invEur(paid)} · Likutis: ${invEur(remaining)}` : "Finansinės informacijos telefone dar nėra (ji atsiranda, kai kompiuteryje atnaujinamas projektų sąrašas).";
+  $("inv-note-to").textContent = inv.to ? "Gavėjas: " + inv.to : "Buhalterio el. pašto telefonas dar nežino – laiške įrašykite ranka (arba atnaujinkite projektų sąrašą po to, kai PC programa bus atnaujinta).";
+}
+function invBody(v) {
+  const f = (inv.p && inv.p.fin) || {}, total = +f.total || 0, paid = +f.paid || 0, invd = +f.invoiced || 0, remaining = Math.max(total - paid, 0);
+  let b = "Sveiki,\n\nprašau išrašyti sąskaitą.\n\n" +
+    `Projektas: ${inv.project}\nUžsakovas: ${v.customer || "—"}\nDarbų rūšis: ${v.work || "—"}\nSutartis: ${v.contract || "—"}\nAtsiskaitymas: ${v.stage}\n` +
+    `Sąskaitą išrašyti: ${invEur(v.amount)}\n\nSąskaitos gavėjas / mokėtojas: ${v.payer || "—"}\n` +
+    `Kodas: ${v.code || "—"}\nPVM kodas: ${v.vat || "—"}\nAdresas: ${v.addr || "—"}\n`;
+  if (inv.p && inv.p.fin) b += `\nFINANSINĖ INFORMACIJA PAGAL ${inv.project}\nSutarties suma: ${invEur(total)}\nIšrašyta sąskaitų: ${invEur(invd)}\nGauta: ${invEur(paid)}\nLikutis pagal projekto kainą: ${invEur(remaining)}\n`;
+  if (v.note) b += "\nPastaba buhalterei:\n" + v.note + "\n";
+  return b;
+}
+function invValues() {
+  return { customer: $("inv-customer").value.trim(), work: $("inv-work").value.trim(), contract: $("inv-contract").value.trim(), amount: num($("inv-amount").value),
+    stage: $("inv-stage").value, payer: $("inv-payer").value.trim(), code: $("inv-code").value.trim(), vat: $("inv-vat").value.trim(), addr: $("inv-addr").value.trim(), note: $("inv-note").value.trim() };
+}
+function bindInvoice() {
+  $("inv-project").onclick = () => openPicker((p) => { if (p) invPick(p); });
+  $("inv-copy").onclick = async () => {
+    const v = invValues(); if (!inv.project) return toast("Pasirinkite projektą", true);
+    const txt = invBody(v);
+    try { await navigator.clipboard.writeText(txt); toast("Tekstas nukopijuotas"); } catch (_) { toast("Nepavyko nukopijuoti", true); }
+  };
+  $("inv-send").onclick = async () => {
+    const v = invValues();
+    if (!inv.project) return toast("Pasirinkite projektą", true);
+    if (!(v.amount > 0)) return toast("Nurodykite sąskaitos sumą", true);
+    const payer = v.payer || v.customer;
+    const subject = `${inv.project} – prašymas išrašyti sąskaitą – ${payer}`;
+    // 1) PC pažymės „sąskaita užsakyta“ (importas patvirtinamas Telefono dėžutėje)
+    const fields = { project_no: inv.project, amount: Math.round(v.amount * 100) / 100, stage: v.stage, payer, payer_code: v.code, payer_vat: v.vat, payer_address: v.addr, customer: v.customer, work: v.work, contract: v.contract, note: v.note };
+    await enqueue("invoice_request", fields, [], `${inv.project}: sąskaita ${fmt2(v.amount)} € (${v.stage})`);
+    // 2) telefono pašto programa su paruoštu laišku
+    const url = "mailto:" + encodeURIComponent(inv.to || "").replace(/%40/g, "@") + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(invBody(v));
+    toast("Atidaromas laiškas…");
+    window.location.href = url;
+    stack.length = 0; show("home");
   };
 }
 
@@ -2977,7 +3040,7 @@ async function boot() {
   document.querySelectorAll("[data-go]").forEach((b) => {
     b.onclick = () => {
       const g = b.dataset.go;
-      if (g === "note") initNote(); if (g === "marker") initMarker(); if (g === "expense") initExpense(); if (g === "files") initFiles(); if (g === "contact") initContact(); if (g === "field") initField(); if (g === "fm") initFm();
+      if (g === "note") initNote(); if (g === "marker") initMarker(); if (g === "expense") initExpense(); if (g === "files") initFiles(); if (g === "contact") initContact(); if (g === "invoice") initInvoice(); if (g === "field") initField(); if (g === "fm") initFm();
       show(g);
     };
   });
@@ -2989,7 +3052,7 @@ async function boot() {
   $("in-cam").onchange = onPhotoInput; $("in-gal").onchange = onPhotoInput;
   $("queue-send").onclick = async () => { await flush(); renderQueue(); };
   $("queue-clean").onclick = async () => { for (const it of await DB.all("queue")) if (it.state === "sent") await DB.del("queue", it.id); renderQueue(); updateBadge(); };
-  bindNote(); bindMarker(); bindExpense(); bindFiles(); bindContact(); bindField(); bindFm(); bindAR(); bindSettings();
+  bindNote(); bindMarker(); bindExpense(); bindFiles(); bindContact(); bindInvoice(); bindField(); bindFm(); bindAR(); bindSettings();
   window.addEventListener("online", () => { updateBadge(); flush(); });
   window.addEventListener("offline", updateBadge);
   window.addEventListener("popstate", () => {});
