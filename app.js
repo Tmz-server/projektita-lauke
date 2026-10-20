@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.15.0";
+const VERSION = "1.15.1";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -2521,13 +2521,53 @@ function applyCfgFragment() {
 }
 /* ------------------------------------------------------------------ LAUKO MATAVIMAS (ruletė / Leica DISTO per Bluetooth) */
 const FM_SVC = "3ab10100-f831-4395-b29d-570977d5bf94";
-const FM_KEY = "prj_fm_draft";
+const FM_KEY = "prj_fm_draft", FM_LAST = "prj_fm_last";
 const fm = { project: "", items: [], dev: null, server: null, last: null, lastAt: 0, aux: "", on: false, names: [] };
+/* Kiekvienas projektas turi savo nebaigtą matavimą / abrisą (raktas prj_fm_draft:<PRJ>) – pakeitus projektą kito neprarandame. */
+const fmKey = (prj) => FM_KEY + ":" + (prj || "_");
 function fmSaveDraft() {
-  try { localStorage.setItem(FM_KEY, JSON.stringify({ project: fm.project, items: fm.items, from: $("fm-from").value, to: $("fm-to").value, sketch: $("fm-sketch").value, date: fm.date, ab: fmab.blds.length ? fmAbExport() : null })); } catch (_) { /* ignoruojam */ }
+  try {
+    localStorage.setItem(fmKey(fm.project), JSON.stringify({ project: fm.project, items: fm.items, from: $("fm-from").value, to: $("fm-to").value, sketch: $("fm-sketch").value, date: fm.date, ab: fmab.blds.length ? fmAbExport() : null, saved: new Date().toISOString() }));
+    localStorage.setItem(FM_LAST, fm.project || "");
+  } catch (_) { /* ignoruojam */ }
 }
-function fmLoadDraft() {
-  try { const j = JSON.parse(localStorage.getItem(FM_KEY) || "null"); return j && typeof j === "object" ? j : null; } catch (_) { return null; }
+function fmReadKey(k) { try { const j = JSON.parse(localStorage.getItem(k) || "null"); return j && typeof j === "object" ? j : null; } catch (_) { return null; } }
+function fmLoadDraft(prj) {
+  const j = fmReadKey(fmKey(prj)); if (j) return j;
+  const old = fmReadKey(FM_KEY);   // sena (viena bendra) juodraščio vieta – perkeliame pagal jos projektą
+  if (old && (old.project || "") === (prj || "")) return old;
+  return null;
+}
+function fmMigrateOld() {
+  try {
+    const old = fmReadKey(FM_KEY); if (!old) return;
+    const k = fmKey(old.project || ""); if (!localStorage.getItem(k)) localStorage.setItem(k, JSON.stringify(old));
+    localStorage.removeItem(FM_KEY);
+  } catch (_) { /* */ }
+}
+const fmPending = (d) => !!d && ((d.items && d.items.length > 0) || (d.ab && Array.isArray(d.ab.buildings) && d.ab.buildings.some((b) => b.extra || (b.orig_pts && JSON.stringify(b.pts) !== JSON.stringify(b.orig_pts)))));
+function fmDraftList() {
+  const out = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i); if (!k || !k.startsWith(FM_KEY + ":")) continue;
+      const d = fmReadKey(k); if (!d || !d.project || !fmPending(d)) continue;
+      out.push({ project: d.project, n: (d.items || []).length, extra: ((d.ab && d.ab.buildings) || []).filter((b) => b.extra).length, saved: d.saved || "" });
+    }
+  } catch (_) { /* */ }
+  return out.sort((x, y) => String(y.saved).localeCompare(String(x.saved)));
+}
+function fmDraftsRender() {
+  const box = $("fm-drafts"); if (!box) return;
+  const l = fmDraftList().filter((d) => d.project !== fm.project);
+  box.hidden = !l.length; box.innerHTML = "";
+  if (!l.length) return;
+  const t = document.createElement("div"); t.className = "small muted"; t.textContent = "Neišsiųsti kitų projektų matavimai / abrisai (išsaugoti telefone):"; box.appendChild(t);
+  l.forEach((d) => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "btn small ghost";
+    b.textContent = `${d.project} · ${d.n} atkarp.${d.extra ? " · +" + d.extra + " obj." : ""}`;
+    b.onclick = () => fmSetProject(d.project); box.appendChild(b);
+  });
 }
 const fmFmt = (v) => v.toFixed(3).replace(".", ",") + " m";
 function fmStatus(txt, ok) { $("fm-status").textContent = txt; document.querySelector(".fm-box").classList.toggle("ok", !!ok); }
@@ -2645,13 +2685,27 @@ function fmDisconnect() {
   try { if (fm.dev && fm.dev.gatt.connected) fm.dev.gatt.disconnect(); } catch (_) { /* */ }
   $("fm-connect").textContent = "Prijungti DISTO"; fmStatus("DISTO atjungtas");
 }
-async function fmSetProject(prj) {
+async function fmSetProject(prj, restore) {
+  const prev = fm.project;
+  if (!restore && prev !== prj) fmSaveDraft();   // dabartinio projekto juodraštis lieka savo vietoje
   fm.project = prj; if (prj) rememberProject(prj);
   setPick($("fm-project"), prj, "Pasirinkite projektą…");
   fm.names = [];
+  if (prj && (restore || prev !== prj)) {
+    const dr = fmLoadDraft(prj);
+    if (!restore && !prev && fm.items.length && !fmPending(dr)) {
+      try { localStorage.removeItem(fmKey("")); } catch (_) { /* */ }   // matuota be projekto – priskiriama pasirinktam projektui
+    } else {
+      fm.items = dr && Array.isArray(dr.items) ? dr.items : []; fm.date = (dr && dr.date) || todayISO();
+      $("fm-from").value = (dr && dr.from) || ""; $("fm-to").value = (dr && dr.to) || ""; $("fm-sketch").value = (dr && dr.sketch) || "";
+      fmab.draft = dr && dr.ab ? dr.ab : null;
+      if (fmPending(dr) && !restore) toast(`Atkurtas ${prj} nebaigtas matavimas (${fm.items.length} atkarp.)`);
+    }
+    fmRender();
+  }
   if (prj) { const d = await cacheGet("points:" + prj); fm.names = ((d && d.points) || []).map((p) => String(p.nr)); }
   await fmAbLoad(prj);
-  fmNames(); fmSaveDraft();
+  fmNames(); fmSaveDraft(); fmDraftsRender();
   if (prj) refreshBuildings(prj, true).then(async (j) => { if (j && fm.project === prj) { fmab.draft = fmab.blds.length ? fmAbExport() : null; await fmAbLoad(prj); fmNames(); } });
 }
 
@@ -3142,21 +3196,24 @@ function fmAbBind() {
   $("fm-ab-refresh").onclick = async () => { if (!fm.project) return toast("Pasirinkite projektą", true); const keep = fmAbExport(); await refreshBuildings(fm.project, false); fmab.draft = keep; await fmAbLoad(fm.project); fmNames(); };
 }
 function initFm() {
+  fmMigrateOld();
   fm.items = []; fm.date = todayISO();
   $("fm-from").value = ""; $("fm-to").value = ""; $("fm-dist").value = ""; $("fm-note").value = ""; $("fm-sketch").value = "";
   setPick($("fm-project"), "", "Pasirinkite projektą…"); fm.project = ""; fm.names = [];
-  const dr = fmLoadDraft();
-  if (dr && ((dr.items && dr.items.length) || dr.project)) {
+  let last = ""; try { last = localStorage.getItem(FM_LAST) || ""; } catch (_) { /* */ }
+  let dr = fmLoadDraft(last);
+  if (!fmPending(dr)) { const l = fmDraftList(); if (l.length) { last = l[0].project; dr = fmLoadDraft(last); } }   // kitas nebaigtas, jei paskutinis tuščias
+  if (dr && (fmPending(dr) || last)) {
     fm.items = Array.isArray(dr.items) ? dr.items : []; fm.date = dr.date || todayISO();
     $("fm-from").value = dr.from || ""; $("fm-to").value = dr.to || ""; $("fm-sketch").value = dr.sketch || "";
     fmab.draft = dr.ab || null;
-    if (dr.project) fmSetProject(dr.project);
-    if (fm.items.length) toast("Atkurtas nebaigtas matavimas (" + fm.items.length + " atkarp.)");
+    if (last) fmSetProject(last, true);
+    if (fm.items.length) toast(`Atkurtas ${last || ""} nebaigtas matavimas (${fm.items.length} atkarp.)`);
   }
   if (!fm.on) { $("fm-connect").textContent = "Prijungti DISTO"; fmStatus(navigator.bluetooth ? "DISTO neprijungtas (galima ir įvesti ranka)" : "Bluetooth nepalaikomas – atstumus įveskite ranka"); }
   $("fm-big").textContent = fm.last != null ? fmFmt(fm.last) : "—";
   fmab.sel = -1; fmab.blds = []; fmab.sides = []; fmab.draw = null; fmab.move = false;
-  fmRender(); fmNames();
+  fmRender(); fmNames(); fmDraftsRender();
 }
 function bindFm() {
   fmAbBind();
@@ -3171,7 +3228,7 @@ function bindFm() {
     const total = fm.items.reduce((s, i) => s + i.dist_m, 0);
     await enqueue("field_measure", { project_no: fm.project, measure_date: fm.date || todayISO(), sketch_note: $("fm-sketch").value.trim(), items: fm.items, abris: fmab.blds.length ? fmAbExport() : null },
       [], `${fm.project}: lauko matavimas, ${fm.items.length} atkarp., ${total.toFixed(2).replace(".", ",")} m`);
-    try { localStorage.removeItem(FM_KEY); } catch (_) { /* */ }
+    try { localStorage.removeItem(fmKey(fm.project)); localStorage.removeItem(FM_LAST); } catch (_) { /* */ }
     fm.items = []; toast("Matavimas įrašytas į eilę"); stack.length = 0; show("home");
   };
 }
