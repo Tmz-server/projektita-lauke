@@ -54,6 +54,9 @@
     <button class="card wide" data-go="contact" id="home-contact" type="button">
       <span>👤 Kontaktas</span><small>pridėti žmogų prie projekto</small>
     </button>
+    <button class="card wide" data-go="invoice" id="home-invoice" type="button">
+      <span>🧾 Sąskaita buhalterei</span><small>prašymas išrašyti sąskaitą (laiškas)</small>
+    </button>
     <button class="card wide" data-go="queue" id="home-queue">
       <span id="home-queue-title">Siuntimo eilė</span><small id="home-queue-sub">—</small>
     </button>
@@ -119,6 +122,38 @@
     <label class="lbl" for="ct-notes">Pastabos</label>
     <textarea id="ct-notes" rows="3" placeholder="Nebūtina"></textarea>
     <div class="bar"><button type="button" class="btn primary" id="ct-save">Išsaugoti į eilę</button></div>
+  </section>
+
+  <!-- SĄSKAITA BUHALTEREI -->
+  <section id="v-invoice" class="view" data-title="Sąskaita buhalterei" hidden>
+    <label class="lbl">Projektas</label>
+    <button type="button" class="pick" id="inv-project">Pasirinkite projektą…</button>
+    <div id="inv-fin" class="small muted" style="margin:6px 0"></div>
+    <label class="lbl" for="inv-customer">Užsakovas</label>
+    <input id="inv-customer" type="text" autocomplete="off">
+    <label class="lbl" for="inv-work">Darbų rūšis</label>
+    <input id="inv-work" type="text" autocomplete="off">
+    <label class="lbl" for="inv-contract">Sutartis</label>
+    <input id="inv-contract" type="text" autocomplete="off" placeholder="Nr., data arba „žodinė sutartis“">
+    <div class="row cols2">
+      <div><label class="lbl" for="inv-amount">Sąskaitą išrašyti, €</label><input id="inv-amount" type="text" inputmode="decimal" placeholder="0,00"></div>
+      <div><label class="lbl" for="inv-stage">Atsiskaitymas</label><select id="inv-stage"><option>Avansas</option><option>Tarpinis mokėjimas</option><option>Galutinis atsiskaitymas</option><option>Kita</option></select></div>
+    </div>
+    <label class="lbl" for="inv-payer">Mokėtojas / sąskaitos gavėjas</label>
+    <input id="inv-payer" type="text" autocomplete="off">
+    <div class="row cols2">
+      <div><label class="lbl" for="inv-code">Įmonės / asm. kodas</label><input id="inv-code" type="text" autocomplete="off"></div>
+      <div><label class="lbl" for="inv-vat">PVM kodas</label><input id="inv-vat" type="text" autocomplete="off"></div>
+    </div>
+    <label class="lbl" for="inv-addr">Mokėtojo adresas</label>
+    <input id="inv-addr" type="text" autocomplete="off">
+    <label class="lbl" for="inv-note">Pastaba buhalterei</label>
+    <textarea id="inv-note" rows="3" placeholder="Nebūtina"></textarea>
+    <div class="bar">
+      <button type="button" class="btn primary" id="inv-send">Rengti laišką buhalterei</button>
+      <button type="button" class="btn ghost" id="inv-copy">Kopijuoti tekstą</button>
+    </div>
+    <p class="small muted" id="inv-note-to"></p>
   </section>
 
   <!-- IŠLAIDA -->
