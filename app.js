@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.14.0";
+const VERSION = "1.15.0";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -600,6 +600,7 @@ async function localPointCounts(prj, since) {
   }
   return out;
 }
+const mkHasXY = (p) => typeof p.x === "number" && typeof p.y === "number" && isFinite(p.x) && isFinite(p.y);
 async function renderMarker() {
   const body = $("marker-body"); body.hidden = !marker.project;
   if (!marker.project) return;
@@ -608,10 +609,17 @@ async function renderMarker() {
   const pts = (d && d.points) || [];
   const local = await localPointCounts(marker.project, d && d.updated);
   let withPhoto = 0;
+  const cntOf = (p) => (Number(p.photos) || 0) + (local[p.nr] || 0);
   const sorted = pts.slice().sort((a, b) => { const x = parseFloat(a.nr), y = parseFloat(b.nr); return (isNaN(x) || isNaN(y)) ? String(a.nr).localeCompare(String(b.nr)) : x - y; });
+  const hasXY = pts.some(mkHasXY);
+  const plan = hasXY && mkp.mode === "plan";
+  $("marker-mode").hidden = !hasXY; $("marker-nopl").hidden = !(pts.length && !hasXY);
+  [...$("marker-mode").children].forEach((b) => b.classList.toggle("on", b.dataset.m === (plan ? "plan" : "list")));
+  $("marker-plan").hidden = !plan; box.hidden = plan;
   for (const p of sorted) {
-    const cnt = (Number(p.photos) || 0) + (local[p.nr] || 0);
+    const cnt = cntOf(p);
     if (cnt) withPhoto++;
+    if (plan) continue;
     if (flt && !(`${p.nr} ${p.kodas}`.toLowerCase().includes(flt))) continue;
     const b = document.createElement("button"); b.type = "button"; b.className = "chip" + (cnt ? " done" : "");
     b.innerHTML = `<b>${esc(p.nr)}</b><small>${esc(p.kodas || "")}</small>${cnt ? `<span class="n">✓ ${cnt}</span>` : ""}`;
@@ -622,6 +630,119 @@ async function renderMarker() {
   $("marker-manual").hidden = !!pts.length;
   $("marker-manual-msg").textContent = pts.length ? "" : "Šiam projektui taškų sąrašo nėra (kompiuteryje nenuskaitytas KADMAT DWG). Taško Nr. galite įrašyti ranka.";
   if (pts.length) { $("marker-manual").hidden = false; $("marker-manual-msg").textContent = "Taško nėra sąraše? Įrašykite Nr. ranka:"; }
+  if (plan) { await mkpPrepare(pts.filter(mkHasXY), cntOf, flt); mkpRender(); } else mkpStopGps();
+}
+/* ---- riboženklių PLANAS: taškai su numeriais (koordinatės iš KADMAT DWG), fonas – pastatai / DWG ---- */
+const mkp = { mode: "plan", prj: "", pts: [], cnt: new Map(), bg: null, blds: [], swap: false, lks: false, k: 1, cx: 0, cy: 0, W: 0, H: 0, sel: -1, pos: null, watch: null, ptrs: new Map(), g: null, flt: "", fitted: "" };
+const mkpP = (p) => (mkp.swap ? [p.y, p.x] : [p.x, p.y]);   // plano kryptis: [rytai, šiaurė] (šiaurė – į viršų)
+async function mkpPrepare(pts, cntOf, flt) {
+  const key = marker.project + "|" + pts.length;
+  mkp.pts = pts; mkp.cnt = new Map(pts.map((p, i) => [i, cntOf(p)]));
+  if (mkp.prj !== marker.project) { mkp.prj = marker.project; mkp.bg = null; mkp.blds = []; mkp.sel = -1; mkp.fitted = ""; }
+  const mx = pts.reduce((s, p) => s + p.x, 0) / pts.length, my = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+  mkp.swap = mx > 3e6 && my < 1e6;
+  const [e, n] = mkp.swap ? [my, mx] : [mx, my];
+  mkp.lks = e > 100000 && e < 900000 && n > 5500000 && n < 6500000;
+  try {
+    const bd = await cacheGet("buildings:" + marker.project);
+    if (bd) { mkp.bg = fmAbBgDecode(bd.background); mkp.blds = bd.buildings || []; }
+    else if (cfgReady() && navigator.onLine && Auth.signedIn() && mkp.bgTried !== marker.project) {
+      mkp.bgTried = marker.project;
+      refreshBuildings(marker.project, true).then((j) => { if (j && marker.project === mkp.prj && !$("marker-plan").hidden) { mkp.bg = fmAbBgDecode(j.background); mkp.blds = j.buildings || []; mkpRender(); } });
+    }
+  } catch (_) { /* */ }
+  if (mkp.fitted !== key) { mkp.fitted = key; mkpFit(); }
+  if (flt !== mkp.flt) {   // filtras: pereiname prie pirmo rasto taško
+    mkp.flt = flt;
+    if (flt) { const i = pts.findIndex((p) => `${p.nr} ${p.kodas}`.toLowerCase().includes(flt)); if (i >= 0) { const q = mkpP(pts[i]); mkp.cx = q[0]; mkp.cy = q[1]; } }
+  }
+}
+function mkpFit() {
+  const svg = $("mk-svg"), W = svg.clientWidth || 360, H = svg.clientHeight || 420;
+  const q = mkp.pts.map(mkpP); if (!q.length) return;
+  const xs = q.map((p) => p[0]), ys = q.map((p) => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  mkp.cx = (x0 + x1) / 2; mkp.cy = (y0 + y1) / 2;
+  mkp.k = Math.min((W - 60) / (Math.max(x1 - x0, 12) * 1.25), H / (Math.max(y1 - y0, 12) * 1.25));
+  mkp.cx += 30 / mkp.k;   // dešinėje – mastelio mygtukai
+}
+function mkpZoom(f, sx, sy) {
+  const W = mkp.W, H = mkp.H; if (sx == null) { sx = W / 2; sy = H / 2; }
+  const px = mkp.cx + (sx - W / 2) / mkp.k, py = mkp.cy - (sy - H / 2) / mkp.k;
+  mkp.k = Math.min(Math.max(mkp.k * f, 0.02), 400);
+  mkp.cx = px - (sx - W / 2) / mkp.k; mkp.cy = py + (sy - H / 2) / mkp.k;
+}
+function mkpRender() {
+  const svg = $("mk-svg"); if (!svg || $("marker-plan").hidden) return;
+  const W = svg.clientWidth, H = svg.clientHeight; if (!W || !H) return;
+  mkp.W = W; mkp.H = H; svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const k = mkp.k, SX = (px) => W / 2 + (px - mkp.cx) * k, SY = (py) => H / 2 - (py - mkp.cy) * k;
+  let s = "";
+  if (mkp.bg) {
+    const g = mkp.bg, m = mkp.swap ? [0, -k, -k, 0, W / 2 + (g.oy - mkp.cx) * k, H / 2 - (g.ox - mkp.cy) * k] : [k, 0, 0, k, W / 2 + (g.ox - mkp.cx) * k, H / 2 - (g.oy - mkp.cy) * k];
+    s += `<g transform="matrix(${m.map((v) => v.toFixed(4)).join(" ")})"><path class="mk-bg" d="${g.d}"/></g>`;
+  }
+  for (const b of mkp.blds) {
+    const pp = (b.pts || []).map((p) => { const q = mkp.swap ? [p[1], p[0]] : [p[0], p[1]]; return SX(q[0]).toFixed(1) + "," + SY(q[1]).toFixed(1); }).join(" ");
+    if (pp) s += b.closed ? `<polygon class="mk-bld" points="${pp}"/>` : `<polyline class="mk-bl" points="${pp}"/>`;
+  }
+  if (mkp.pos) { const [e, n] = mkp.pos.en, x = SX(e), y = SY(n); s += `<circle class="mk-acc" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${Math.max(mkp.pos.acc * k, 6).toFixed(1)}"/><circle class="mk-me" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="7"/>`; }
+  const vis = [];
+  mkp.pts.forEach((p, i) => { const q = mkpP(p), x = SX(q[0]), y = SY(q[1]); if (x > -30 && x < W + 30 && y > -30 && y < H + 30) vis.push({ i, x, y }); });
+  vis.sort((a, b) => (b.i === mkp.sel) - (a.i === mkp.sel) || (mkp.cnt.get(a.i) ? 1 : 0) - (mkp.cnt.get(b.i) ? 1 : 0));
+  const taken = [], flt = mkp.flt; let out = "";
+  for (const v of vis) {
+    const p = mkp.pts[v.i], done = mkp.cnt.get(v.i) > 0, hit = flt && `${p.nr} ${p.kodas}`.toLowerCase().includes(flt);
+    const nr = String(p.nr), w = 9 + nr.length * 8, bx = [v.x + 7, v.y - 20, v.x + 7 + w, v.y - 4];
+    const show = v.i === mkp.sel || !taken.some((t) => bx[0] < t[2] && bx[2] > t[0] && bx[1] < t[3] && bx[3] > t[1]);
+    if (show) taken.push(bx);
+    out += `<g class="mk-p${done ? " done" : ""}${v.i === mkp.sel ? " sel" : ""}${hit ? " hit" : ""}"><circle cx="${v.x.toFixed(1)}" cy="${v.y.toFixed(1)}" r="${v.i === mkp.sel ? 9 : 7}"/>${show ? `<text x="${(v.x + 9).toFixed(1)}" y="${(v.y - 8).toFixed(1)}">${esc(nr)}</text>` : ""}</g>`;
+  }
+  svg.innerHTML = s + out;
+  const sp = mkp.sel >= 0 ? mkp.pts[mkp.sel] : null; $("mk-sel").hidden = !sp;
+  if (sp) { $("mk-sel-nr").textContent = "Taškas " + sp.nr; $("mk-sel-k").textContent = sp.kodas ? "(" + sp.kodas + ")" : ""; const c = mkp.cnt.get(mkp.sel); $("mk-sel-n").textContent = c ? "Nuotraukų: " + c : "Nuotraukų dar nėra"; }
+}
+function mkpTap(x, y) {
+  const k = mkp.k, W = mkp.W, H = mkp.H; let best = -1, bd = 34;
+  mkp.pts.forEach((p, i) => { const q = mkpP(p), d = Math.hypot(W / 2 + (q[0] - mkp.cx) * k - x, H / 2 - (q[1] - mkp.cy) * k - y); if (d < bd) { bd = d; best = i; } });
+  mkp.sel = best === mkp.sel ? -1 : best; mkpRender();
+}
+function mkpStopGps() { if (mkp.watch != null) { try { navigator.geolocation.clearWatch(mkp.watch); } catch (_) { /* */ } mkp.watch = null; } $("mk-gps") && $("mk-gps").classList.remove("on"); }
+function mkpGps() {
+  if (mkp.watch != null) { mkpStopGps(); mkp.pos = null; mkpRender(); return; }
+  if (!mkp.lks) return toast("Taškų koordinatės ne LKS-94 – vietos plane parodyti negalima", true);
+  if (!("geolocation" in navigator)) return toast("Naršyklė nepalaiko vietos nustatymo", true);
+  let first = true; $("mk-gps").classList.add("on");
+  mkp.watch = navigator.geolocation.watchPosition((p) => {
+    const en = wgsToLks94(p.coords.latitude, p.coords.longitude); mkp.pos = { en, acc: p.coords.accuracy || 5 };
+    if (first) { first = false; mkp.cx = en[0]; mkp.cy = en[1]; if (mkp.k < 1.5) mkp.k = 3; }
+    mkpRender();
+  }, (e) => { mkpStopGps(); toast("Vietos klaida: " + e.message, true); }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
+}
+function bindMarkerPlan() {
+  const svg = $("mk-svg");
+  svg.addEventListener("pointerdown", (e) => { try { svg.setPointerCapture(e.pointerId); } catch (_) { /* */ } mkp.ptrs.set(e.pointerId, [e.clientX, e.clientY]); mkp.g = { moved: 0, t: Date.now(), n: mkp.ptrs.size, d0: 0 }; if (mkp.ptrs.size === 2) { const [a, b] = [...mkp.ptrs.values()]; mkp.g.d0 = Math.hypot(a[0] - b[0], a[1] - b[1]); } });
+  svg.addEventListener("pointermove", (e) => {
+    if (!mkp.ptrs.has(e.pointerId)) return;
+    const prev = mkp.ptrs.get(e.pointerId), r = svg.getBoundingClientRect();
+    if (mkp.ptrs.size === 1) { const dx = e.clientX - prev[0], dy = e.clientY - prev[1]; mkp.g.moved += Math.abs(dx) + Math.abs(dy); mkp.cx -= dx / mkp.k; mkp.cy += dy / mkp.k; mkp.ptrs.set(e.pointerId, [e.clientX, e.clientY]); mkpRender(); }
+    else if (mkp.ptrs.size === 2) {
+      mkp.ptrs.set(e.pointerId, [e.clientX, e.clientY]); const [a, b] = [...mkp.ptrs.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      if (mkp.g.d0 > 10 && d > 10) { mkp.g.moved += 99; mkpZoom(d / mkp.g.d0, (a[0] + b[0]) / 2 - r.left, (a[1] + b[1]) / 2 - r.top); mkp.g.d0 = d; mkpRender(); }
+    }
+  });
+  const up = (e) => {
+    if (!mkp.ptrs.has(e.pointerId)) return; const r = svg.getBoundingClientRect(), g = mkp.g; mkp.ptrs.delete(e.pointerId);
+    if (g && g.n === 1 && mkp.ptrs.size === 0 && g.moved < 10 && Date.now() - g.t < 700) mkpTap(e.clientX - r.left, e.clientY - r.top);
+    if (mkp.ptrs.size === 0) mkp.g = null;
+  };
+  svg.addEventListener("pointerup", up); svg.addEventListener("pointercancel", up);
+  svg.addEventListener("wheel", (e) => { e.preventDefault(); const r = svg.getBoundingClientRect(); mkpZoom(e.deltaY < 0 ? 1.25 : 0.8, e.clientX - r.left, e.clientY - r.top); mkpRender(); }, { passive: false });
+  $("mk-zi").onclick = () => { mkpZoom(1.6); mkpRender(); }; $("mk-zo").onclick = () => { mkpZoom(1 / 1.6); mkpRender(); };
+  $("mk-fit").onclick = () => { mkpFit(); mkpRender(); }; $("mk-gps").onclick = mkpGps;
+  $("mk-shoot").onclick = () => { const p = mkp.sel >= 0 ? mkp.pts[mkp.sel] : null; if (p) shootPoint(p.nr, p.kodas || ""); };
+  [...$("marker-mode").children].forEach((b) => { b.onclick = () => { mkp.mode = b.dataset.m; if (mkp.mode !== "plan") mkpStopGps(); renderMarker(); }; });
+  window.addEventListener("resize", () => { if (!$("marker-plan").hidden) mkpRender(); });
 }
 async function loadMarkerProject(prj) {
   marker.project = prj; rememberProject(prj); setPick($("marker-project"), prj, "Pasirinkite projektą…");
@@ -638,12 +759,13 @@ function shootPoint(nr, kodas) {
   }, { camera: true });
 }
 function bindMarker() {
+  bindMarkerPlan();
   $("marker-project").onclick = () => openPicker(loadMarkerProject, { title: "Projektas (KADMAT)" });
   $("marker-filter").oninput = renderMarker;
   $("marker-refresh").onclick = async () => { if (!marker.project) return; const j = await refreshPoints(marker.project, false); if (j) { marker.data = j; renderMarker(); toast("Taškai atnaujinti"); } };
   $("marker-nr-go").onclick = () => { const nr = $("marker-nr").value.trim(); if (!nr) return toast("Įrašykite taško Nr.", true); shootPoint(nr, ""); $("marker-nr").value = ""; };
 }
-function initMarker() { marker.project = ""; marker.data = null; setPick($("marker-project"), "", "Pasirinkite projektą…"); $("marker-body").hidden = true; $("marker-filter").value = ""; }
+function initMarker() { mkpStopGps(); mkp.pos = null; marker.project = ""; marker.data = null; setPick($("marker-project"), "", "Pasirinkite projektą…"); $("marker-body").hidden = true; $("marker-filter").value = ""; }
 
 /* ------------------------------------------------------------------ IŠLAIDA */
 const exp = { project: "", photos: [], cats: DEFAULT_EXPENSES };
@@ -2776,6 +2898,18 @@ function fmAbAddObject(kind, closed, pts) {
   toast(`Pridėtas objektas ${id}`);
   const first = fmab.sides.findIndex((sd) => fmab.blds[sd.bi].id === id); if (first >= 0) fmAbSelect(first);
 }
+/* braižymo palietimas: kampai prilimpa prie esamų kampų; „Linija“ režime baigiama po 2 taškų */
+function fmAbDrawTap(e) {
+  const d = fmab.draw; if (!d) return false;
+  let p = fmAbPtFromEvent(e); if (!p) return true;
+  const nb = fmAbNearest(p, fmAbPx(22));
+  if (nb) { const q = fmab.blds[nb.bi].pts[nb.k]; p = [q[0], q[1]]; }
+  const last = d.pts[d.pts.length - 1];
+  if (last && Math.hypot(last[0] - p[0], last[1] - p[1]) < 1e-6) { toast("Tas pats taškas – palieskite kitą vietą", true); return true; }
+  d.pts.push(p);
+  if (d.line && d.pts.length >= 2) { fmab.draw = null; fmAbAddObject(d.kind, false, d.pts); } else fmAbRender();
+  return true;
+}
 function fmAbPtFromEvent(e) {
   const svg = $("fm-ab-svg"), m = svg.getScreenCTM(); if (!m || !fmab.tf) return null;
   const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
@@ -2805,6 +2939,8 @@ function fmAbRender() {
   $("fm-ab-wd").classList.toggle("primary", !!fmab.weld); $("fm-ab-zwd").classList.toggle("on", !!fmab.weld);
   $("fm-ab-move").classList.toggle("primary", fmab.move);
   $("fm-ab-draw").hidden = !fmab.draw;
+  $("fm-ab-fin-c").hidden = $("fm-ab-fin-o").hidden = !!(fmab.draw && fmab.draw.line);
+  $("fm-ab-ln").classList.toggle("primary", !!(fmab.draw && fmab.draw.line)); $("fm-ab-zln").classList.toggle("on", !!(fmab.draw && fmab.draw.line));
   $("fm-ab-del").hidden = !(sel && fmab.blds[sel.bi] && fmab.blds[sel.bi].extra);
   const drawPts = fmab.draw ? fmab.draw.pts : [];
   if (!fmab.blds.length && !drawPts.length) {
@@ -2843,8 +2979,7 @@ function fmAbRender() {
   bg.addEventListener("click", (e) => {
     if (fmab.split && fmab.sel >= 0 && !fmab.draw) { fmAbSplitAt(fmAbPtFromEvent(e)); return; }
     if (!fmab.draw) return;
-    const p = fmAbPtFromEvent(e); if (!p) return;
-    fmab.draw.pts.push(p); fmAbRender();
+    fmAbDrawTap(e);
   });
   if (fmab.bg) {   // visas DWG – pilkas fonas, neliečiamas
     const g = mk("g", { transform: `translate(${fmab.bg.ox - minx} ${maxy - fmab.bg.oy})`, "pointer-events": "none" });
@@ -2856,7 +2991,7 @@ function fmAbRender() {
   fmab.blds.forEach((b, bi) => {
     if (b.orig && fmab.blds[bi].pts.some((p, k) => Math.abs(p[0] - b.orig[k][0]) > 0.005 || Math.abs(p[1] - b.orig[k][1]) > 0.005))
       mk("polyline", { points: b.orig.concat(b.closed ? [b.orig[0]] : []).map((p) => `${X(p[0])},${Y(p[1])}`).join(" "), fill: "none", stroke: cMut, "stroke-width": sw * 0.6, "stroke-dasharray": `${sw * 1.5} ${sw * 1.5}`, opacity: "0.45" });
-    if (b.closed) mk("polygon", { points: b.pts.map((p) => `${X(p[0])},${Y(p[1])}`).join(" "), fill: b.extra ? cWarn : cSoft, "fill-opacity": b.extra ? "0.12" : "0.55", stroke: "none" });
+    if (b.closed) mk("polygon", { points: b.pts.map((p) => `${X(p[0])},${Y(p[1])}`).join(" "), fill: b.extra ? cWarn : cSoft, "fill-opacity": b.extra ? "0.12" : "0.55", stroke: "none", "pointer-events": fmab.draw ? "none" : "auto" });
     mk("text", { x: X(cen[bi][0]), y: Y(cen[bi][1]), "text-anchor": "middle", "font-size": fs * 1.1, fill: cMut, "font-weight": "700", opacity: "0.6" }, b.id + (b.code && b.code !== "2601" && b.code !== "2602" ? " · " + b.code : ""));
   });
   let done = 0, bad = 0;
@@ -2874,7 +3009,7 @@ function fmAbRender() {
     let nx = mx - cx, ny = my - cy; const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
     mk("text", { x: mx + nx * fs * 1.0, y: my + ny * fs * 1.0 + fs * 0.35, "text-anchor": "middle", "font-size": fs, fill: isel ? cAcc : tcol, "font-weight": it || isel ? "700" : "400" }, txt);
     const hit = mk("line", { x1, y1, x2, y2, stroke: "transparent", "stroke-width": fs * 2.2, "stroke-linecap": "round", style: "cursor:pointer" });
-    hit.addEventListener("click", (e) => { if (fmab.split && i === fmab.sel) fmAbSplitAt(fmAbPtFromEvent(e)); else fmAbSelect(i); });
+    hit.addEventListener("click", (e) => { if (fmab.draw) { fmAbDrawTap(e); return; } if (fmab.split && i === fmab.sel) fmAbSplitAt(fmAbPtFromEvent(e)); else fmAbSelect(i); });
   });
   fmab.blds.forEach((b, bi) => b.pts.forEach((p, k) => {
     mk("circle", { cx: X(p[0]), cy: Y(p[1]), r: sw * 1.2, fill: fmab.move ? cAcc : cMut });
@@ -2898,7 +3033,7 @@ function fmAbRender() {
     drawPts.forEach((p) => mk("circle", { cx: X(p[0]), cy: Y(p[1]), r: sw * 1.6, fill: cAcc }));
   }
   info.textContent = `Objektų: ${fmab.blds.length}, kraštinių: ${fmab.sides.length}, išmatuota: ${done}` + (bad ? `, nukrypsta >${Math.round(fmab.tol * 100)} cm: ${bad}` : "") +
-    (fmab.bg && !sel ? " · pilkas fonas – visas DWG (matuojami 26XX / 27XX)" : "") + (fmab.full && fmab.view.k === 1 && !sel ? " · Mastelis: dviem pirštais arba ＋/－ dešinėje" : "") + (fmab.draw ? " · Braižymas: palieskite brėžinį, kad pridėtumėte kampus" :
+    (fmab.bg && !sel ? " · pilkas fonas – visas DWG (matuojami 26XX / 27XX)" : "") + (fmab.full && fmab.view.k === 1 && !sel ? " · Mastelis: dviem pirštais arba ＋/－ dešinėje" : "") + (fmab.draw ? (fmab.draw.line ? (fmab.draw.pts.length ? " · Linija: palieskite GALO tašką (kampai prilimpa)" : " · Linija: palieskite PRADŽIOS tašką (kampai prilimpa)") : " · Braižymas: palieskite brėžinį, kad pridėtumėte kampus") :
       fmab.split && sel ? ` · ${sel.from} → ${sel.to}: palieskite liniją ten, kur įterpti viršūnę, arba įrašykite atstumą nuo pradžios` :
       fmab.weld ? (fmab.weld.src ? ` · Perkeliamas ${fmAbVName(fmab.weld.src)}: palieskite kampą, ant kurio sutapdinti` : " · Sutapdinimas: palieskite kampą, kurį perkelsite") :
       sel ? ` · ${sel.from} → ${sel.to}: dabar ${fmFmt(sel.len)}${sel.plan != null ? `, DWG ${fmFmt(sel.plan)}` : ""} – matuokite D2 arba įveskite ilgį` : " · Palieskite kraštinę ir matuokite");
@@ -2970,6 +3105,13 @@ function fmAbBind() {
     fm.items = fm.items.filter((it) => !(it.from.startsWith(b.id + "-") && it.to.startsWith(b.id + "-")));
     fmab.blds.splice(sd.bi, 1); fmab.sel = -1; fmAbBuild(); fmRender(); fmSaveDraft(); fmNames();
   };
+  const lineToggle = () => {
+    if (fmab.draw && fmab.draw.line) { fmab.draw = null; fmAbRender(); return; }
+    fmab.weld = null; fmab.split = false; fmab.move = false; fmab.sel = -1; $("fm-ab-new").hidden = true;
+    fmab.draw = { kind: "kita", closed: false, pts: [], line: true }; fmAbRender();
+    toast("Palieskite linijos pradžią, tada galą (kampai prilimpa)");
+  };
+  $("fm-ab-ln").onclick = lineToggle; $("fm-ab-zln").onclick = lineToggle;
   $("fm-ab-add").onclick = () => { $("fm-ab-new").hidden = !$("fm-ab-new").hidden; };
   $("fm-ab-kind").innerHTML = FM_KINDS.map((k) => `<option value="${k[0]}">${k[1]}</option>`).join("");
   $("fm-ab-how").onchange = () => { $("fm-ab-dims").hidden = $("fm-ab-how").value !== "rect"; };
