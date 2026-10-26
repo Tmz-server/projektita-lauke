@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#393187">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <title>PROJEKTITA lauke</title>
 <link rel="stylesheet" href="app.css">
 </head>
@@ -206,9 +206,10 @@
   <section id="v-files" class="view" data-title="Matavimų failai" hidden>
     <label class="lbl">Projektas</label>
     <button type="button" class="pick" id="files-project">Pasirinkite projektą…</button>
-    <p class="muted small">Pasirinkite SurPad eksportuotus CSV (ir, jei norite, HTML) failus. Kompiuteryje jie bus sudėti į projekto „04 matavimu duomenys“ dienos aplanką pagal matavimo datą.</p>
+    <p class="muted small">Pasirinkite SurPad eksportuotus CSV (ir, jei norite, HTML) failus. Kompiuteryje jie bus sudėti į projekto „04 matavimu duomenys“ dienos aplanką – pagal PASKUTINĘ faile esančią matavimo datą.</p>
     <button type="button" class="btn" id="files-pick">Pasirinkti failus…</button>
     <ul class="list" id="files-list"></ul>
+    <p class="muted small" id="files-info" hidden></p>
     <div class="bar"><button type="button" class="btn primary" id="files-save">Išsaugoti į eilę</button></div>
   </section>
 

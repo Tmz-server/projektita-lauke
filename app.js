@@ -10,7 +10,7 @@
  */
 "use strict";
 (() => {
-const VERSION = "1.15.1";
+const VERSION = "1.15.2";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = "openid profile offline_access User.Read Files.ReadWrite";
 const DEFAULT_NOTE_CATS = ["Problema", "Pastaba", "Užduotis", "Į ką atkreipti dėmesį", "Kita"];
@@ -912,20 +912,55 @@ function bindInvoice() {
 
 /* ------------------------------------------------------------------ MATAVIMŲ FAILAI */
 const mf = { project: "", files: [] };
+/* Matavimo datos iš SurPad failų: HTML – „Start Time“/„End Time“ langeliai (be „Report Time“), CSV – stulpelis „Local date“.
+   Aplanko data kompiuteryje = PASKUTINĖ faile esanti matavimo data. */
+async function mfScan(f) {
+  if (f._scanned) return;
+  f._scanned = true; f._dates = [];
+  try {
+    const txt = await f.text();
+    const ds = new Set();
+    if (/\.html?$/i.test(f.name)) {
+      const body = txt.replace(/Report Time\s*<\/th>\s*<td>[^<]*<\/td>/i, "");
+      for (const m of body.matchAll(/<td[^>]*>\s*(\d{4}-\d{2}-\d{2})[ T]\d{1,2}:\d{2}/g)) ds.add(m[1]);
+      if (!ds.size) { const r = txt.match(/Report Time\s*<\/th>\s*<td>\s*(\d{4}-\d{2}-\d{2})/i); if (r) ds.add(r[1]); }
+    } else if (/\.csv$/i.test(f.name)) {
+      const lines = txt.split(/\r?\n/); const sep = (lines[0] || "").includes(";") && !(lines[0] || "").includes(",") ? ";" : ",";
+      const hdr = (lines[0] || "").split(sep).map((x) => x.replace(/^\uFEFF/, "").replace(/"/g, "").trim());
+      const ix = hdr.findIndex((h) => /^local date$/i.test(h));
+      if (ix >= 0) for (let i = 1; i < lines.length; i++) { const m = (lines[i].split(sep)[ix] || "").match(/(\d{4})[-./](\d{2})[-./](\d{2})/); if (m) ds.add(`${m[1]}-${m[2]}-${m[3]}`); }
+    }
+    f._dates = Array.from(ds).sort();
+  } catch (e) { log("Datos nuskaitymas: " + (e && e.message)); }
+}
+function mfLastDate() {
+  const all = mf.files.flatMap((f) => f._dates || []).sort();
+  return all.length ? all[all.length - 1] : "";
+}
 function renderFiles() {
   const ul = $("files-list"); ul.innerHTML = "";
   mf.files.forEach((f, i) => {
     const li = document.createElement("li");
-    li.innerHTML = `<div class="t">${esc(f.name)}</div><div class="s">${(f.size / 1024).toFixed(1)} KB</div><div class="acts"><button type="button" class="btn small ghost">Pašalinti</button></div>`;
+    const d = f._dates || [];
+    const dTxt = !f._scanned ? " · skaitoma data…" : (d.length ? " · matavimai " + (d[0] === d[d.length - 1] ? d[0] : d[0] + " – " + d[d.length - 1]) : " · datos faile nėra");
+    li.innerHTML = `<div class="t">${esc(f.name)}</div><div class="s">${(f.size / 1024).toFixed(1)} KB${dTxt}</div><div class="acts"><button type="button" class="btn small ghost">Pašalinti</button></div>`;
     li.querySelector("button").onclick = () => { mf.files.splice(i, 1); renderFiles(); };
     ul.appendChild(li);
   });
+  const info = $("files-info");
+  if (info) {
+    const last = mfLastDate();
+    info.hidden = !mf.files.length;
+    info.textContent = !mf.files.length ? "" : (last ? `Kompiuteryje failai bus sudėti į aplanką „04 matavimu duomenys“ → „NN ${last}“ (paskutinė matavimo data faile).`
+      : "Faile matavimo datos nerasta – bus naudojama įrašo sukūrimo data.");
+  }
 }
 function initFiles() { mf.project = ""; mf.files = []; setPick($("files-project"), "", "Pasirinkite projektą…"); renderFiles(); }
 function bindFiles() {
   $("files-project").onclick = () => openPicker((p) => { mf.project = p; rememberProject(p); setPick($("files-project"), p, "Pasirinkite projektą…"); });
   const afterAdd = () => {
     renderFiles();
+    Promise.all(mf.files.map(mfScan)).then(renderFiles);
     // jei failo vardas yra PRJ numeris ir projektas dar nepasirinktas – pasiūlome
     if (!mf.project) {
       const m = mf.files.map((f) => f.name.replace(/\.[^.]+$/, "").toUpperCase()).find((n) => /^PRJ\d+(-\d+)?$/.test(n));
@@ -952,8 +987,10 @@ function bindFiles() {
   $("files-save").onclick = async () => {
     if (!mf.project) return toast("Pasirinkite projektą", true);
     if (!mf.files.length) return toast("Pasirinkite bent vieną failą", true);
-    await enqueue("measure_files", { project_no: mf.project },
-      mf.files.map((f) => ({ blob: f, origName: f.name })), `${mf.project}: ${mf.files.map((f) => f.name).join(", ")}`,
+    await Promise.all(mf.files.map(mfScan));
+    const last = mfLastDate();
+    await enqueue("measure_files", last ? { project_no: mf.project, measure_date: last } : { project_no: mf.project },
+      mf.files.map((f) => ({ blob: f, origName: f.name })), `${mf.project}: ${mf.files.map((f) => f.name).join(", ")}${last ? " · " + last : ""}`,
       { handles: mf.files.map((f) => f._h).filter(Boolean) });
     toast("Failai įrašyti į eilę"); stack.length = 0; show("home");
   };
@@ -2519,6 +2556,7 @@ function applyCfgFragment() {
   } catch (e) { log("Blogas #cfg: " + e.message); }
   history.replaceState(null, "", location.pathname + location.search);
 }
+
 /* ------------------------------------------------------------------ LAUKO MATAVIMAS (ruletė / Leica DISTO per Bluetooth) */
 const FM_SVC = "3ab10100-f831-4395-b29d-570977d5bf94";
 const FM_KEY = "prj_fm_draft", FM_LAST = "prj_fm_last";
